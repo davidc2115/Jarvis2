@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple arc-reactor glyph: concentric cyan rings on transparent ground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path
+        android:pathData="M54,20 A34,34 0 1 1 53.9,20 Z M54,20 A34,34 0 1 0 54.1,20 Z"
+        android:strokeColor="#4DF7FF" android:strokeWidth="4" android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,34 A20,20 0 1 1 53.9,34 Z"
+        android:strokeColor="#8FF6FF" android:strokeWidth="3" android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,46 A8,8 0 1 1 53.9,46 Z"
+        android:fillColor="#E8FFFE" />
+</vector>
