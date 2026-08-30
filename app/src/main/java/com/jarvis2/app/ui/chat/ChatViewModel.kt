@@ -8,6 +8,7 @@ import com.jarvis2.app.ai.CommandResult
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.Turn
+import com.jarvis2.app.ai.WebSearchTool
 import com.jarvis2.app.data.db.ChatDao
 import com.jarvis2.app.data.db.ChatMessageEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,7 @@ class ChatViewModel(
     private val commandRouter: CommandRouter,
     private val memoryStore: MemoryStore,
     private val chatDao: ChatDao,
+    private val webSearchTool: WebSearchTool,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -97,6 +99,35 @@ class ChatViewModel(
 
     fun dismissWebSearchPrompt() {
         _state.value = _state.value.copy(pendingWebSearchQuery = null)
+    }
+
+    /**
+     * L'unique exception explicite et opt-in a "100% local" (voir WebSearchTool) :
+     * declenchee seulement ici, sur confirmation explicite de l'utilisateur dans le
+     * chat (bouton "Rechercher" apres que le modele ait admis ne pas savoir) --
+     * jamais automatiquement. Le resultat est reinjecte comme un message normal de
+     * Jarvis, et memorise comme n'importe quel autre echange.
+     */
+    fun searchWeb(query: String) {
+        _state.value = _state.value.copy(pendingWebSearchQuery = null, isThinking = true)
+        viewModelScope.launch {
+            val result = webSearchTool.search(query)
+            result.onSuccess { results ->
+                val formatted = if (results.isEmpty()) {
+                    "Aucun resultat web trouve pour « $query »."
+                } else {
+                    buildString {
+                        appendLine("Resultats web pour « $query » :")
+                        results.forEach { r -> appendLine("• ${r.title} — ${r.snippet} (${r.url})") }
+                    }.trim()
+                }
+                appendMessage(Turn.Role.ASSISTANT, formatted)
+                memoryStore.remember("$query -> $formatted", source = "web_search")
+            }.onFailure { error ->
+                appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : ${error.message}")
+            }
+            _state.value = _state.value.copy(isThinking = false)
+        }
     }
 
     private fun looksUncertain(reply: String): Boolean {

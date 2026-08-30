@@ -2,6 +2,7 @@ package com.jarvis2.app.ai
 
 import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.IntegrationsRouter
+import com.jarvis2.app.obsidian.VaultRepository
 
 /** Outcome of trying to interpret a message as a device action rather than plain chat. */
 sealed interface CommandResult {
@@ -20,10 +21,18 @@ sealed interface CommandResult {
  * If nothing matches, [route] returns [CommandResult.NotACommand] and the
  * caller (ChatViewModel) forwards the message to the LLM as normal
  * conversation instead.
+ *
+ * Coverage was extended beyond the original "action-only" set (torche,
+ * bluetooth, wifi, agenda create, contact create, pdf, kml, mail) to also
+ * cover *reading back* what's on the phone -- contacts, agenda, vault notes,
+ * memory -- and generating Word/Excel, since a real "gestion complete du
+ * smartphone" needs both directions, not just triggering actions blindly.
  */
 class CommandRouter(
     private val integrations: IntegrationsRouter,
     private val fileGen: FileGenRouter,
+    private val vault: VaultRepository,
+    private val memory: MemoryStore,
 ) {
 
     suspend fun route(rawInput: String): CommandResult {
@@ -57,6 +66,11 @@ class CommandRouter(
                 integrations.bluetooth.requestDisable()
                 CommandResult.Handled("Ouverture des réglages Bluetooth pour désactivation.")
             },
+            Matcher(Regex("(liste|montre|quels?).*(appareils?|appairés?).*bluetooth|bluetooth.*(appareils?|appairés?)")) {
+                val devices = integrations.bluetooth.pairedDevices()
+                if (devices.isEmpty()) CommandResult.Handled("Aucun appareil Bluetooth appairé (ou permission Bluetooth non accordée).")
+                else CommandResult.Handled("Appareils appairés : " + devices.joinToString(", ") { it.name ?: it.address })
+            },
             Matcher(Regex("(active|ouvre).*(wi-?fi)")) {
                 integrations.wifi.openWifiSettingsPanel()
                 CommandResult.Handled("Panneau Wi-Fi ouvert (Android impose ce panneau depuis Android 10, l'app ne peut plus basculer le Wi-Fi silencieusement).")
@@ -71,14 +85,42 @@ class CommandRouter(
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
+            Matcher(Regex("(mes|mon).*(prochains? événements?|prochains? rendez-vous|planning|agenda)")) {
+                val events = integrations.calendar.upcomingEvents(limit = 5)
+                if (events.isEmpty()) CommandResult.Handled("Aucun événement à venir dans l'agenda.")
+                else CommandResult.Handled("Prochains événements : " + events.joinToString(" ; ") { it.title })
+            },
             Matcher(Regex("(crée|ajoute).*contact")) { t ->
                 val name = extractAfter(t, listOf("contact")) ?: "Nouveau contact"
                 integrations.contacts.createContact(name)
                 CommandResult.Handled("Contact \"$name\" créé.")
             },
+            Matcher(Regex("(liste|montre|affiche).*(mes )?contacts")) {
+                val contacts = integrations.contacts.listContacts(limit = 15)
+                if (contacts.isEmpty()) CommandResult.Handled("Aucun contact trouvé (ou permission Contacts non accordée).")
+                else CommandResult.Handled("Contacts (${contacts.size}) : " + contacts.joinToString(", ") { it.name })
+            },
+            Matcher(Regex("cherche.*contact")) { t ->
+                val query = extractAfter(t, listOf("contact"))
+                if (query == null) {
+                    CommandResult.Handled("Précise un nom à chercher, par exemple \"cherche le contact Marie\".")
+                } else {
+                    val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(query, ignoreCase = true) }
+                    if (matches.isEmpty()) CommandResult.Handled("Aucun contact trouvé pour « $query ».")
+                    else CommandResult.Handled("Trouvé : " + matches.joinToString(", ") { it.name })
+                }
+            },
             Matcher(Regex("(génère|crée|exporte).*pdf")) { t ->
                 val file = fileGen.pdf.generateFromText(title = "Document Jarvis", body = t)
                 CommandResult.Handled("PDF généré: ${file.name}.")
+            },
+            Matcher(Regex("(génère|crée|exporte).*(word|docx|document texte)")) { t ->
+                val file = fileGen.docx.generateFromText(title = "Document Jarvis", body = t)
+                CommandResult.Handled("Document Word généré: ${file.name}.")
+            },
+            Matcher(Regex("(génère|crée|exporte).*(excel|xlsx|tableur)")) { t ->
+                val file = fileGen.xlsx.generateFromRows("Jarvis", listOf(listOf("Contenu"), listOf(t)))
+                CommandResult.Handled("Fichier Excel généré: ${file.name} (structure minimale -- utilise l'onglet Fichiers pour un vrai tableau à plusieurs colonnes).")
             },
             Matcher(Regex("(génère|crée|exporte).*(zip|archive)")) {
                 CommandResult.Handled("Dis-moi quel dossier zipper depuis l'écran Fichiers — je n'archive pas encore par commande vocale seule pour éviter de compresser le mauvais dossier.")
@@ -95,6 +137,33 @@ class CommandRouter(
                 val subject = extractAfter(t, listOf("mail", "email", "courriel")) ?: "Message depuis Jarvis"
                 integrations.mail.composeMail(subject = subject, body = "")
                 CommandResult.Handled("Ouverture de ton application mail avec le sujet \"$subject\".")
+            },
+            Matcher(Regex("(crée|ajoute|nouvelle).*(note).*(vault|obsidian)|(vault|obsidian).*(crée|ajoute|nouvelle).*note")) { t ->
+                val titleGuess = extractAfter(t, listOf("intitulée", "appelée", "titre", "titrée")) ?: "Note Jarvis"
+                val note = vault.createNote(titleGuess, body = t)
+                CommandResult.Handled("Note « ${note.title} » créée dans le vault Obsidian.")
+            },
+            Matcher(Regex("cherche.*(vault|obsidian)|cherche.*note")) { t ->
+                val query = extractAfter(t, listOf("vault", "obsidian", "note"))
+                if (query == null) {
+                    CommandResult.Handled("Précise ce que tu cherches dans le vault, par exemple \"cherche dans le vault projet X\".")
+                } else {
+                    val matches = vault.listNotes().filter {
+                        it.title.contains(query, ignoreCase = true) || it.body.contains(query, ignoreCase = true)
+                    }
+                    if (matches.isEmpty()) CommandResult.Handled("Aucune note trouvée pour « $query ».")
+                    else CommandResult.Handled("Notes trouvées : " + matches.joinToString(", ") { it.title })
+                }
+            },
+            Matcher(Regex("(liste|montre).*(mes )?notes")) {
+                val notes = vault.listNotes()
+                if (notes.isEmpty()) CommandResult.Handled("Le vault est vide pour l'instant.")
+                else CommandResult.Handled("Notes du vault (${notes.size}) : " + notes.joinToString(", ") { it.title })
+            },
+            Matcher(Regex("(tu te souviens|de quoi (a-t-on|on a) parlé|rappelle-moi ce qu)")) { t ->
+                val relevant = memory.relevant(t)
+                if (relevant.isEmpty()) CommandResult.Handled("Rien de particulier en mémoire à ce sujet.")
+                else CommandResult.Handled("Je me souviens : " + relevant.joinToString(" | ") { it.text.take(80) })
             },
         )
     }

@@ -93,7 +93,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         TextButton(onClick = { viewModel.dismissWebSearchPrompt() }) { Text("Ignorer") }
-                        TextButton(onClick = { viewModel.dismissWebSearchPrompt() /* TODO: trigger WebSearchTool + re-inject result */ }) {
+                        TextButton(onClick = { viewModel.searchWeb(query) }) {
                             Text("Rechercher", color = JarvisGold)
                         }
                     }

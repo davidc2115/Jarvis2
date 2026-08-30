@@ -1,5 +1,7 @@
 package com.jarvis2.app.ui.vault
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -53,8 +55,23 @@ fun VaultScreen(viewModel: VaultViewModel = koinViewModel()) {
         return
     }
 
+    // Item 2 de la roadmap README : selecteur de dossier vault externe (SAF), pour pointer
+    // vers un vault deja synchronise (Syncthing, etc.) au lieu du dossier prive par defaut de
+    // l'app -- VaultRepository/StorageAccess geraient deja ce cas, il ne manquait que ce bouton.
+    val pickVaultFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) viewModel.setExternalVault(uri)
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Vault Obsidian", color = JarvisCyan) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Vault Obsidian", color = JarvisCyan) },
+                actions = {
+                    TextButton(onClick = { pickVaultFolder.launch(null) }) { Text("📁 Externe", color = JarvisCyan) }
+                    TextButton(onClick = { viewModel.useLocalVault() }) { Text("Local", color = JarvisGold) }
+                },
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { showNewNoteDialog = true }, containerColor = JarvisGold) {
                 Icon(Icons.Filled.Add, contentDescription = "Nouvelle note")

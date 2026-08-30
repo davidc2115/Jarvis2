@@ -1,5 +1,7 @@
 package com.jarvis2.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,16 +20,33 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ui.theme.JarvisCyan
 import com.jarvis2.app.ui.theme.JarvisGold
 import org.koin.androidx.compose.koinViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
+    val context = LocalContext.current
+
+    // Item 1 de la roadmap README : selecteur de fichier .task (SAF) pour importer le
+    // modele MediaPipe (fallback quand AICore/Gemini Nano n'est pas disponible sur
+    // l'appareil), au lieu d'avoir a le pousser via adb dans Android/data/.../models/.
+    val pickModelFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val dest = File(context.getExternalFilesDir(null) ?: context.filesDir, "models/local-llm.task")
+            dest.parentFile?.mkdirs()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            }
+            viewModel.refreshEngine()
+        }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Réglages", color = JarvisCyan) }) }) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp)) {
@@ -35,6 +54,10 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
             Text(state.engine?.displayName ?: "…")
             Text(state.engine?.notes.orEmpty(), style = MaterialTheme.typography.labelSmall)
             Button(onClick = { viewModel.refreshEngine() }, modifier = Modifier.padding(top = 8.dp)) { Text("Ré-détecter") }
+            Button(
+                onClick = { pickModelFile.launch(arrayOf("*/*")) },
+                modifier = Modifier.padding(top = 8.dp),
+            ) { Text("Importer un modèle .task (secours hors AICore)") }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
@@ -53,7 +76,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
             Text(
-                "Vault Obsidian : par défaut l'app utilise son propre dossier privé. Pour pointer vers un vault externe (ex. synchronisé avec Obsidian desktop), l'écran Vault proposera bientôt un sélecteur de dossier (SAF).",
+                "Vault Obsidian : par défaut l'app utilise son propre dossier privé. Pour pointer vers un vault externe (ex. synchronisé avec Obsidian desktop), utilise le bouton « 📁 Externe » dans l'onglet Vault.",
                 style = MaterialTheme.typography.labelSmall,
             )
         }

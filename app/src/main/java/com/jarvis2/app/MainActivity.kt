@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.jarvis2.app.ui.Jarvis2NavHost
+import com.jarvis2.app.ui.permissions.PermissionsGate
 import com.jarvis2.app.ui.theme.Jarvis2Theme
 
 /**
@@ -22,7 +23,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             Jarvis2Theme {
-                Jarvis2NavHost()
+                PermissionsGate {
+                    Jarvis2NavHost()
+                }
             }
         }
     }

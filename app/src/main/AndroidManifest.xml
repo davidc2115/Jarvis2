@@ -18,8 +18,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Flashlight -->
-    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Flashlight : CameraManager.setTorchMode ne demande PAS la permission CAMERA
+         depuis l'API 23 pour la torche seule (voir FlashlightController.kt), inutile
+         de faire accorder cette permission sensible pour une simple torche. -->
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
 
     <!-- Bluetooth (Android 12+ new runtime model, plus legacy for older) -->
