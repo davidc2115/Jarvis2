@@ -29,7 +29,7 @@ import com.jarvis2.app.ui.theme.JarvisCyan
 import com.jarvis2.app.ui.theme.JarvisGold
 
 /**
- * Toutes les integrations telephone (integrations/*) supposent deja la permission
+ * Toutes les integrations telephone (le package integrations) supposent deja la permission
  * accordee -- rien ne la demandait nulle part avant cet ecran, donc en pratique
  * chaque action reelle echouait silencieusement ou levait une SecurityException des
  * la premiere utilisation sur un vrai appareil (Android exige une demande runtime
