@@ -69,7 +69,9 @@ class GoogleAuthController(private val context: Context) {
             try {
                 GoogleAuthUtil.getToken(context, account, "oauth2:$GMAIL_READONLY_SCOPE")
             } catch (e: UserRecoverableAuthException) {
-                throw GoogleAuthNeedsUserActionException(e.intent)
+                val recoveryIntent = e.intent
+                    ?: error("Confirmation Google requise mais l'ecran systeme est indisponible. Reessaie depuis Reglages -> Comptes.")
+                throw GoogleAuthNeedsUserActionException(recoveryIntent)
             }
         }
     }
