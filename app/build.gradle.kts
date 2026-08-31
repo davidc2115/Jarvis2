@@ -86,9 +86,9 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            // com.sun.mail:android-mail et android-activation embarquent tous deux
-            // les memes fichiers META-INF (NOTICE/LICENSE), ce qui fait echouer
-            // mergeDebugJavaResource sans ces exclusions.
+            // Exclusions generiques pour les fichiers META-INF (NOTICE/LICENSE)
+            // qui apparaissent en double entre plusieurs dependances et font
+            // echouer mergeDebugJavaResource sans ca.
             excludes += "/META-INF/NOTICE.md"
             excludes += "/META-INF/LICENSE.md"
             excludes += "/META-INF/NOTICE"
@@ -134,13 +134,12 @@ dependencies {
     // (SmolVLM2, telecharge automatiquement, aucun compte requis).
     implementation(libs.llamatik)
 
-    // JavaMail port Android (namespace javax.mail, package export verifie
-    // via le pom Maven du module) -- lecture IMAP dans integrations/MailReader.kt.
-    // Pas de dependance a Gmail API/OAuth (necessiterait un projet Google
-    // Cloud) : fonctionne avec n'importe quel fournisseur IMAP, dont Gmail
-    // lui-meme via un mot de passe d'application.
-    implementation(libs.android.mail)
-    implementation(libs.android.mail.activation)
+    // Google Identity Services -- Authorization API (jeton d'acces Gmail
+    // scope, voir integrations/GoogleAuthController.kt et MailReader.kt).
+    // Remplace l'ancienne integration IMAP (com.sun.mail) a la demande de
+    // l'utilisateur, qui dispose deja d'un projet Google Cloud + Client ID
+    // OAuth Web configures.
+    implementation(libs.play.services.auth)
 
     // --- Local AI engines -------------------------------------------------
     // AICore (Gemini Nano) client SDK. This artifact is still labelled

@@ -1,5 +1,8 @@
 package com.jarvis2.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +24,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.gguf.LocalGgufModel
 import com.jarvis2.app.ui.theme.BubbleStyle
@@ -41,11 +44,20 @@ import org.koin.androidx.compose.koinViewModel
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
-    var mailHostField by remember(state.mailHost) { mutableStateOf(state.mailHost) }
-    var mailPortField by remember(state.mailPort) { mutableStateOf(state.mailPort) }
-    var mailUsernameField by remember(state.mailUsername) { mutableStateOf(state.mailUsername) }
-    var mailPasswordField by remember(state.mailAppPassword) { mutableStateOf(state.mailAppPassword) }
-    var mailUseSslField by remember(state.mailUseSsl) { mutableStateOf(state.mailUseSsl) }
+
+    // Lance l'ecran de consentement Google quand GoogleAuthController signale qu'il en
+    // faut un (voir SettingsViewModel.connectGmail/pendingGmailAuthIntent) ; le resultat
+    // (accorde ou annule) revient dans viewModel.onGoogleAuthResult.
+    val gmailAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> viewModel.onGoogleAuthResult(result.data) }
+
+    LaunchedEffect(state.pendingGmailAuthIntent) {
+        state.pendingGmailAuthIntent?.let { intentSender ->
+            gmailAuthLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+            viewModel.clearPendingGmailAuthIntent()
+        }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Réglages", color = JarvisCyan) }) }) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -127,58 +139,35 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text("Mail (IMAP)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Text("Mail (Google)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
             Text(
-                "Lecture seule. Fonctionne avec n'importe quel fournisseur IMAP, dont Gmail lui-même " +
-                    "via un « mot de passe d'application » généré dans myaccount.google.com → Sécurité → " +
-                    "Validation en deux étapes → Mots de passe des applications (jamais ton mot de passe " +
-                    "principal). Une fois configuré, demande à Jarvis dans le chat : « lis mes mails ».",
+                "Lecture seule via l'API Gmail. Connecte ton compte Google ci-dessous (écran de " +
+                    "consentement standard Google -- Jarvis ne voit jamais ton mot de passe). Une fois " +
+                    "connecté, demande à Jarvis dans le chat : « lis mes mails ».",
                 style = MaterialTheme.typography.labelSmall,
             )
-            OutlinedTextField(
-                value = mailHostField,
-                onValueChange = { mailHostField = it },
-                label = { Text("Hôte IMAP (ex. imap.gmail.com)") },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            OutlinedTextField(
-                value = mailPortField,
-                onValueChange = { mailPortField = it },
-                label = { Text("Port (993 = IMAPS par défaut)") },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            OutlinedTextField(
-                value = mailUsernameField,
-                onValueChange = { mailUsernameField = it },
-                label = { Text("Adresse mail") },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            OutlinedTextField(
-                value = mailPasswordField,
-                onValueChange = { mailPasswordField = it },
-                label = { Text("Mot de passe d'application") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            Text(
+                if (state.gmailConnected) "Statut : connecté" else "Statut : non connecté",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (state.gmailConnected) JarvisCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
             )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                Switch(checked = mailUseSslField, onCheckedChange = { mailUseSslField = it })
-                Text("Connexion chiffrée (SSL/TLS)", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                Button(onClick = {
-                    viewModel.saveMailAccount(mailHostField, mailPortField, mailUsernameField, mailPasswordField, mailUseSslField)
-                }) { Text("Enregistrer") }
-                Button(onClick = { viewModel.testMailConnection() }, enabled = state.mailConfigured && !state.isTestingMail) {
-                    Text(if (state.isTestingMail) "Test en cours…" else "Tester la connexion")
+                Button(onClick = { viewModel.connectGmail() }, enabled = !state.isConnectingGmail) {
+                    Text(
+                        when {
+                            state.isConnectingGmail -> "Connexion…"
+                            state.gmailConnected -> "Reconnecter"
+                            else -> "Connecter Gmail"
+                        },
+                    )
+                }
+                if (state.isConnectingGmail) {
+                    CircularProgressIndicator(modifier = Modifier.padding(start = 12.dp), color = JarvisCyan, strokeWidth = 2.dp)
                 }
             }
-            state.mailTestResult?.let { result ->
-                Text(
-                    result,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (result.startsWith("Échec")) MaterialTheme.colorScheme.error else JarvisCyan,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+            state.gmailConnectError?.let { error ->
+                Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
             }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))

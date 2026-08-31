@@ -1,15 +1,16 @@
 package com.jarvis2.app.ui.settings
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentSender
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
-import com.jarvis2.app.data.MailAccount
-import com.jarvis2.app.data.MailAccountStore
 import com.jarvis2.app.data.SettingsDataStore
-import com.jarvis2.app.integrations.MailReader
+import com.jarvis2.app.integrations.GoogleAuthController
+import com.jarvis2.app.integrations.GoogleAuthNeedsUserActionException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,21 +73,17 @@ data class SettingsUiState(
     val calendarGroupByDay: Boolean = true,
     val contactPresentationStyle: String = "compact",
     val webSearchPresentationStyle: String = "detailed",
-    val mailHost: String = "",
-    val mailPort: String = "993",
-    val mailUsername: String = "",
-    val mailAppPassword: String = "",
-    val mailUseSsl: Boolean = true,
-    val mailConfigured: Boolean = false,
-    val isTestingMail: Boolean = false,
-    val mailTestResult: String? = null,
+    val gmailConnected: Boolean = false,
+    val isConnectingGmail: Boolean = false,
+    val gmailConnectError: String? = null,
+    /** Non-null quand Google exige un ecran de consentement -- l'UI doit le lancer via StartIntentSenderForResult puis appeler onGoogleAuthResult(). */
+    val pendingGmailAuthIntent: IntentSender? = null,
 )
 
 class SettingsViewModel(
     private val engineManager: AiEngineManager,
     private val settings: SettingsDataStore,
-    private val mailAccountStore: MailAccountStore,
-    private val mailReader: MailReader,
+    private val googleAuth: GoogleAuthController,
     private val appContext: Context,
 ) : ViewModel() {
 
@@ -107,16 +104,7 @@ class SettingsViewModel(
                 contactPresentationStyle = settings.get(CONTACT_PRESENTATION_STYLE) ?: "compact",
                 webSearchPresentationStyle = settings.get(WEB_SEARCH_PRESENTATION_STYLE) ?: "detailed",
             )
-            mailAccountStore.get()?.let { account ->
-                _state.value = _state.value.copy(
-                    mailHost = account.host,
-                    mailPort = account.port.toString(),
-                    mailUsername = account.username,
-                    mailAppPassword = account.appPassword,
-                    mailUseSsl = account.useSsl,
-                    mailConfigured = true,
-                )
-            }
+            _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
         }
     }
 
@@ -187,37 +175,42 @@ class SettingsViewModel(
     }
 
     /**
-     * Enregistre le compte mail IMAP (voir data/MailAccountStore.kt --
-     * stocke chiffre, separement de SettingsDataStore). [portText] est
-     * valide/converti ici plutot que dans l'UI pour garder SettingsScreen.kt
-     * simple ; un port invalide est silencieusement remplace par le defaut
-     * IMAPS (993) plutot que de planter.
+     * Lance (ou confirme silencieusement) la connexion Gmail via
+     * GoogleAuthController. Si Google exige un ecran de consentement,
+     * [SettingsUiState.pendingGmailAuthIntent] se remplit et
+     * SettingsScreen.kt est charge de le lancer via
+     * ActivityResultContracts.StartIntentSenderForResult, puis d'appeler
+     * [onGoogleAuthResult] avec l'Intent recu.
      */
-    fun saveMailAccount(host: String, portText: String, username: String, appPassword: String, useSsl: Boolean) {
-        val port = portText.trim().toIntOrNull() ?: if (useSsl) 993 else 143
-        val account = MailAccount(host.trim(), port, username.trim(), appPassword, useSsl)
-        mailAccountStore.save(account)
-        _state.value = _state.value.copy(
-            mailHost = account.host,
-            mailPort = account.port.toString(),
-            mailUsername = account.username,
-            mailAppPassword = account.appPassword,
-            mailUseSsl = account.useSsl,
-            mailConfigured = true,
-            mailTestResult = null,
+    fun connectGmail() = viewModelScope.launch {
+        _state.value = _state.value.copy(isConnectingGmail = true, gmailConnectError = null)
+        val result = googleAuth.getAccessToken()
+        result.fold(
+            onSuccess = {
+                _state.value = _state.value.copy(isConnectingGmail = false, gmailConnected = true)
+            },
+            onFailure = { e ->
+                if (e is GoogleAuthNeedsUserActionException) {
+                    _state.value = _state.value.copy(isConnectingGmail = false, pendingGmailAuthIntent = e.intentSender)
+                } else {
+                    _state.value = _state.value.copy(isConnectingGmail = false, gmailConnectError = e.message)
+                }
+            },
         )
     }
 
-    /** Verifie la connexion IMAP immediatement, pour un retour rapide apres avoir colle un mot de passe. */
-    fun testMailConnection() = viewModelScope.launch {
-        _state.value = _state.value.copy(isTestingMail = true, mailTestResult = null)
-        val result = mailReader.fetchRecent(limit = 1)
+    /** Appele par SettingsScreen.kt une fois l'ecran de consentement Google ferme (succes ou annulation). */
+    fun onGoogleAuthResult(data: Intent?) = viewModelScope.launch {
+        _state.value = _state.value.copy(pendingGmailAuthIntent = null, isConnectingGmail = true)
+        val result = googleAuth.parseAuthorizationResult(data)
         _state.value = _state.value.copy(
-            isTestingMail = false,
-            mailTestResult = result.fold(
-                onSuccess = { "Connexion réussie." },
-                onFailure = { e -> "Échec : ${e.message}" },
-            ),
+            isConnectingGmail = false,
+            gmailConnected = result.isSuccess,
+            gmailConnectError = result.exceptionOrNull()?.message,
         )
+    }
+
+    fun clearPendingGmailAuthIntent() {
+        _state.value = _state.value.copy(pendingGmailAuthIntent = null)
     }
 }

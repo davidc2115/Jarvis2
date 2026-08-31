@@ -238,10 +238,7 @@ class CommandRouter(
             },
             Matcher(Regex("""(lis|montre|affiche).*mails?|(derniers?|nouveaux?) mails?|mails? non lus?""")) { t ->
                 if (!integrations.mailReader.isConfigured()) {
-                    CommandResult.Handled(
-                        "Aucun compte mail configuré. Va dans Réglages → Mail pour renseigner " +
-                            "hôte IMAP, port, utilisateur et mot de passe d'application.",
-                    )
+                    CommandResult.Handled("Aucun compte Google connecté. Va dans Réglages → Mail (Google) pour te connecter.")
                 } else {
                     val unreadOnly = Regex("non lus?").containsMatchIn(t)
                     val result = integrations.mailReader.fetchRecent(limit = 10, unreadOnly = unreadOnly)

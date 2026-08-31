@@ -1,15 +1,14 @@
 package com.jarvis2.app.integrations
 
-import com.jarvis2.app.data.MailAccount
-import com.jarvis2.app.data.MailAccountStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import java.util.Properties
-import javax.mail.Flags
-import javax.mail.Folder
-import javax.mail.Multipart
-import javax.mail.Session
-import javax.mail.internet.InternetAddress
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.net.URLEncoder
 
 /** Resume d'un mail, suffisant pour un affichage chat sans avoir a ouvrir l'appli mail. */
 data class MailSummary(
@@ -21,94 +20,93 @@ data class MailSummary(
 )
 
 /**
- * Lecture d'emails via IMAP (com.sun.mail:android-mail, namespace javax.mail
- * -- verifie via le pom Maven du module avant integration). Remplace la
- * lecture Gmail API/OAuth de l'ancienne appli (abandonnee dans la reecriture
- * complete, tache #182) : Claude ne peut pas provisionner de projet Google
- * Cloud/client OAuth pour l'utilisateur, alors qu'IMAP fonctionne avec
- * n'importe quel fournisseur -- dont Gmail lui-meme via un mot de passe
- * d'application -- sans dependre d'aucun service tiers cote developpeur.
+ * Lecture d'emails via l'API Gmail REST (https://gmail.googleapis.com/gmail/v1/...),
+ * authentifiee par [GoogleAuthController] (scope gmail.readonly). Remplace l'integration
+ * IMAP precedente a la demande explicite de l'utilisateur, qui a fourni son propre Client
+ * ID OAuth Web -- l'obstacle initial ("Claude ne peut pas provisionner de projet Google
+ * Cloud") ne s'applique donc plus ici.
  *
- * Lecture seule volontairement (pas de suppression/marquage depuis Jarvis
- * pour l'instant) : le risque d'une commande vocale mal comprise qui
- * supprimerait un mail important est nettement plus genant qu'un manque de
- * fonctionnalite, contrairement a la lecture qui est sans risque.
+ * Appelle directement l'API REST plutot que la lourde librairie Java
+ * google-api-services-gmail (coordonnees Maven generees, faciles a se tromper, gros
+ * poids dans l'APK) -- coherent avec le style deja utilise ailleurs dans l'appli
+ * (voir ai/WebSearchTool.kt : OkHttpClient + org.json.JSONObject).
+ *
+ * Lecture seule volontairement (pas de suppression/marquage depuis Jarvis pour
+ * l'instant) : le risque d'une commande vocale mal comprise qui supprimerait un mail
+ * important est nettement plus genant qu'un manque de fonctionnalite.
  */
-class MailReader(private val accountStore: MailAccountStore) {
+class MailReader(
+    private val googleAuth: GoogleAuthController,
+    private val httpClient: OkHttpClient = OkHttpClient(),
+) {
 
-    fun isConfigured(): Boolean = accountStore.get() != null
+    /** Pour l'affichage Reglages uniquement -- voir GoogleAuthController.isConnected(). */
+    suspend fun isConfigured(): Boolean = googleAuth.isConnected()
 
     suspend fun fetchRecent(limit: Int = 10, unreadOnly: Boolean = false): Result<List<MailSummary>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val account = accountStore.get()
-                    ?: throw IllegalStateException("Aucun compte mail configuré (Réglages → Mail).")
-                fetch(account, limit, unreadOnly)
+                val token = googleAuth.getAccessToken().getOrThrow()
+                fetchViaGmailApi(token, limit, unreadOnly)
             }
         }
 
-    private fun fetch(account: MailAccount, limit: Int, unreadOnly: Boolean): List<MailSummary> {
-        val protocol = if (account.useSsl) "imaps" else "imap"
-        val props = Properties().apply {
-            put("mail.store.protocol", protocol)
-            put("mail.$protocol.host", account.host)
-            put("mail.$protocol.port", account.port.toString())
-            put("mail.$protocol.connectiontimeout", "15000")
-            put("mail.$protocol.timeout", "15000")
+    private suspend fun fetchViaGmailApi(token: String, limit: Int, unreadOnly: Boolean): List<MailSummary> =
+        coroutineScope {
+            val query = if (unreadOnly) "&q=" + URLEncoder.encode("is:unread", "UTF-8") else ""
+            val listUrl = "$GMAIL_API_BASE/messages?maxResults=$limit&labelIds=INBOX$query"
+            val listJson = JSONObject(getJson(listUrl, token))
+            val ids = listJson.optJSONArray("messages")?.let { arr ->
+                (0 until arr.length()).map { arr.getJSONObject(it).getString("id") }
+            } ?: return@coroutineScope emptyList()
+
+            ids.map { id ->
+                async {
+                    val msgUrl = "$GMAIL_API_BASE/messages/$id" +
+                        "?format=metadata&metadataHeaders=From&metadataHeaders=Subject"
+                    parseMessage(JSONObject(getJson(msgUrl, token)))
+                }
+            }.awaitAll()
         }
-        val session = Session.getInstance(props)
-        val store = session.store
-        store.connect(account.host, account.port, account.username, account.appPassword)
-        try {
-            val inbox = store.getFolder("INBOX")
-            inbox.open(Folder.READ_ONLY)
-            try {
-                val total = inbox.messageCount
-                if (total == 0) return emptyList()
-                // Ne regarde que la fenetre des `limit` derniers messages IMAP
-                // (les plus recents) meme en mode unreadOnly=true -- une vraie
-                // recherche "tous les non-lus de la boite" ferait potentiellement
-                // un FETCH sur des milliers de messages, trop lent pour une
-                // reponse chat.
-                val start = (total - limit + 1).coerceAtLeast(1)
-                val messages = inbox.getMessages(start, total).reversed()
-                return messages
-                    .filter { !unreadOnly || !it.flags.contains(Flags.Flag.SEEN) }
-                    .take(limit)
-                    .map { msg ->
-                        val from = (msg.from?.firstOrNull() as? InternetAddress)?.let {
-                            it.personal ?: it.address
-                        } ?: "Expéditeur inconnu"
-                        val subject = msg.subject ?: "(sans objet)"
-                        val snippet = runCatching { extractSnippet(msg.content) }.getOrDefault("")
-                        MailSummary(
-                            from = from,
-                            subject = subject,
-                            dateMillis = msg.sentDate?.time,
-                            snippet = snippet,
-                            isUnread = !msg.flags.contains(Flags.Flag.SEEN),
-                        )
-                    }
-            } finally {
-                inbox.close(false)
+
+    private fun getJson(url: String, token: String): String {
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("Gmail API : HTTP ${response.code} (${response.body?.string()?.take(200).orEmpty()})")
             }
-        } finally {
-            store.close()
+            return response.body?.string().orEmpty()
         }
     }
 
-    private fun extractSnippet(content: Any?, maxLength: Int = 140): String {
-        val text = when (content) {
-            is String -> content
-            is Multipart -> (0 until content.count)
-                .asSequence()
-                .map { content.getBodyPart(it) }
-                .firstOrNull { it.isMimeType("text/plain") }
-                ?.content as? String
-                ?: ""
-            else -> ""
+    private fun parseMessage(json: JSONObject): MailSummary {
+        var from = "Expéditeur inconnu"
+        var subject = "(sans objet)"
+        json.optJSONObject("payload")?.optJSONArray("headers")?.let { headers ->
+            for (i in 0 until headers.length()) {
+                val header = headers.getJSONObject(i)
+                when (header.optString("name")) {
+                    "From" -> from = header.optString("value", from)
+                    "Subject" -> subject = header.optString("value", subject)
+                }
+            }
         }
-        val cleaned = text.replace(Regex("\\s+"), " ").trim()
-        return if (cleaned.length > maxLength) cleaned.take(maxLength) + "…" else cleaned
+        val labelIds = json.optJSONArray("labelIds")
+        val isUnread = (0 until (labelIds?.length() ?: 0)).any { labelIds!!.getString(it) == "UNREAD" }
+        val dateMillis = json.optString("internalDate").toLongOrNull()
+        val snippet = decodeBasicHtmlEntities(json.optString("snippet"))
+        return MailSummary(from = from, subject = subject, dateMillis = dateMillis, snippet = snippet, isUnread = isUnread)
+    }
+
+    /** Le "snippet" Gmail contient parfois des entites HTML (&#39; etc.) -- decodage minimal, pas de vraie librairie HTML necessaire pour un extrait de texte. */
+    private fun decodeBasicHtmlEntities(text: String): String = text
+        .replace("&amp;", "&")
+        .replace("&#39;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+
+    private companion object {
+        const val GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
     }
 }

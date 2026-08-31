@@ -22,10 +22,11 @@ documentfile = "1.0.1"
 # libmtmd/CLIP (vision multimodale) -- pas de build NDK/CMake maison necessaire.
 # https://github.com/ferranpons/llamatik
 llamatik = "1.10.1"
-# JavaMail port pour Android (namespace javax.mail verifie via le pom Maven) --
-# utilise pour la lecture IMAP (voir integrations/MailReader.kt). Derniere
-# version publiee du fork Android officiel du projet Eclipse Jakarta Mail.
-androidMail = "1.6.7"
+# Identity Services Android : Authorization API (Identity.getAuthorizationClient),
+# utilisee pour obtenir un jeton d'acces Gmail scope (voir
+# integrations/GoogleAuthController.kt). Verifie via developer.android.com/identity/authorization
+# + maven.google.com : derniere version stable publiee au moment de l'integration.
+playServicesAuth = "21.6.0"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -54,8 +55,7 @@ accompanist-permissions = { group = "com.google.accompanist", name = "accompanis
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 llamatik = { group = "com.llamatik", name = "library", version.ref = "llamatik" }
-android-mail = { group = "com.sun.mail", name = "android-mail", version.ref = "androidMail" }
-android-mail-activation = { group = "com.sun.mail", name = "android-activation", version.ref = "androidMail" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

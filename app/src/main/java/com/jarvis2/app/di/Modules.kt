@@ -5,7 +5,6 @@ import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.CommandRouter
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.WebSearchTool
-import com.jarvis2.app.data.MailAccountStore
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.data.db.AppDatabase
 import com.jarvis2.app.filegen.DocxGenerator
@@ -19,6 +18,7 @@ import com.jarvis2.app.integrations.BluetoothController
 import com.jarvis2.app.integrations.CalendarRepository
 import com.jarvis2.app.integrations.ContactsRepository
 import com.jarvis2.app.integrations.FlashlightController
+import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.LocationProvider
 import com.jarvis2.app.integrations.MailComposer
@@ -44,7 +44,6 @@ val dataModule = module {
     single { get<AppDatabase>().chatDao() }
     single { get<AppDatabase>().memoryDao() }
     single { SettingsDataStore(androidContext()) }
-    single { MailAccountStore(androidContext()) }
 }
 
 val aiModule = module {
@@ -64,6 +63,7 @@ val integrationsModule = module {
     single { MailComposer(androidContext()) }
     single { StorageAccess(androidContext()) }
     single { AlarmController(androidContext()) }
+    single { GoogleAuthController(androidContext()) }
     single { MailReader(get()) }
     single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 
@@ -83,7 +83,7 @@ val viewModelModule = module {
     viewModel { GraphViewModel(get()) }
     viewModel { IntegrationsViewModel(get()) }
     viewModel { FileToolsViewModel(get()) }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), androidContext()) }
+    viewModel { SettingsViewModel(get(), get(), get(), androidContext()) }
 }
 
 /** Small helper so module bodies above read as `androidContext()` like the rest of the Koin ecosystem. */
