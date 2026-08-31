@@ -168,6 +168,53 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
+            Text(
+                "Modifiable aussi depuis le chat : \"regroupe mon planning par jour\" / \"planning en liste simple\".",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Présentation des contacts", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                FilterChip(
+                    selected = state.contactPresentationStyle == "compact",
+                    onClick = { viewModel.setContactPresentationStyle("compact") },
+                    label = { Text("Compacte") },
+                )
+                FilterChip(
+                    selected = state.contactPresentationStyle == "detailed",
+                    onClick = { viewModel.setContactPresentationStyle("detailed") },
+                    label = { Text("Détaillée (avec numéro)") },
+                )
+            }
+            Text(
+                "Modifiable aussi depuis le chat : \"contacts en détaillé\" / \"contacts en compact\".",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Présentation de la recherche web", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                FilterChip(
+                    selected = state.webSearchPresentationStyle == "detailed",
+                    onClick = { viewModel.setWebSearchPresentationStyle("detailed") },
+                    label = { Text("Détaillée (titre + extrait + lien)") },
+                )
+                FilterChip(
+                    selected = state.webSearchPresentationStyle == "compact",
+                    onClick = { viewModel.setWebSearchPresentationStyle("compact") },
+                    label = { Text("Compacte (titres seuls)") },
+                )
+            }
+            Text(
+                "Modifiable aussi depuis le chat : \"recherche web en détaillé\" / \"recherche web en compact\".",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
             Text(

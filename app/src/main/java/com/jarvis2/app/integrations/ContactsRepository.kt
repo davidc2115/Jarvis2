@@ -53,6 +53,8 @@ class ContactsRepository(private val context: Context) {
     }
 
     fun listContacts(limit: Int = 100): List<Contact> {
+        val phonesById = loadPhonesById()
+
         val projection = arrayOf(
             ContactsContract.Contacts._ID,
             ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
@@ -67,7 +69,37 @@ class ContactsRepository(private val context: Context) {
             while (it.moveToNext() && result.size < limit) {
                 val id = it.getString(0)
                 val name = it.getString(1) ?: continue
-                result.add(Contact(id = id, name = name, phone = null))
+                result.add(Contact(id = id, name = name, phone = phonesById[id]))
+            }
+            result
+        }
+    }
+
+    /**
+     * Pre-charge un id -> premier numero de telephone, en une seule requete
+     * sur CommonDataKinds.Phone (table separee de Contacts._ID cote
+     * ContactsContract). listContacts() se contentait auparavant de mettre
+     * phone=null en dur, ce qui empechait toute presentation "detaillee"
+     * (voir CommandRouter.formatContacts) d'afficher un vrai numero.
+     */
+    private fun loadPhonesById(): Map<String, String> {
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.NUMBER,
+        )
+        val cursor = context.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, null, null, null,
+        ) ?: return emptyMap()
+
+        return cursor.use {
+            val result = mutableMapOf<String, String>()
+            while (it.moveToNext()) {
+                val contactId = it.getString(0) ?: continue
+                val number = it.getString(1) ?: continue
+                // Garde uniquement le premier numero rencontre par contact --
+                // suffisant pour l'affichage, evite de compliquer Contact
+                // avec une liste de numeros pour un besoin d'UI simple.
+                if (!result.containsKey(contactId)) result[contactId] = number
             }
             result
         }

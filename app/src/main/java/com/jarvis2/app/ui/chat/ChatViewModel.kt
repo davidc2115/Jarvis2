@@ -69,6 +69,13 @@ class ChatViewModel(
                 is CommandResult.Handled -> {
                     appendMessage(Turn.Role.ASSISTANT, result.feedback)
                     memoryStore.remember("$text -> ${result.feedback}", source = "command")
+                    // Certains commandes (voir CommandRouter.kt : matchers de
+                    // presentation en tete de liste) changent bulleShape/
+                    // bubbleUserColor/bubbleAssistantColor en direct depuis le
+                    // chat -- on relit systematiquement apres une commande
+                    // geree, pour que le changement s'applique tout de suite
+                    // sans devoir rouvrir l'ecran Chat.
+                    refreshPresentationPrefs()
                     _state.value = _state.value.copy(isThinking = false)
                     return@launch
                 }
@@ -124,13 +131,14 @@ class ChatViewModel(
         viewModelScope.launch {
             val result = webSearchTool.search(query)
             result.onSuccess { results ->
-                val formatted = if (results.isEmpty()) {
-                    "Aucun resultat web trouve pour « $query »."
-                } else {
-                    buildString {
+                val detailed = (settings.get(com.jarvis2.app.ui.settings.WEB_SEARCH_PRESENTATION_STYLE) ?: "detailed") == "detailed"
+                val formatted = when {
+                    results.isEmpty() -> "Aucun resultat web trouve pour « $query »."
+                    detailed -> buildString {
                         appendLine("Resultats web pour « $query » :")
                         results.forEach { r -> appendLine("• ${r.title} — ${r.snippet} (${r.url})") }
                     }.trim()
+                    else -> "Résultats web pour « $query » : " + results.joinToString(" ; ") { it.title }
                 }
                 appendMessage(Turn.Role.ASSISTANT, formatted)
                 memoryStore.remember("$query -> $formatted", source = "web_search")
@@ -145,6 +153,14 @@ class ChatViewModel(
         val markers = listOf("je ne sais pas", "je ne peux pas répondre", "je n'ai pas cette information", "incertain")
         val lower = reply.lowercase()
         return markers.any { lower.contains(it) }
+    }
+
+    private suspend fun refreshPresentationPrefs() {
+        _state.value = _state.value.copy(
+            bubbleShape = settings.get(com.jarvis2.app.ui.settings.BUBBLE_SHAPE) ?: "rounded",
+            bubbleUserColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR) ?: "gold",
+            bubbleAssistantColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR) ?: "cyan",
+        )
     }
 
     private suspend fun appendMessage(role: Turn.Role, text: String) {

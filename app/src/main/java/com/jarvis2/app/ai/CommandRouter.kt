@@ -3,8 +3,16 @@ package com.jarvis2.app.ai
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.CalendarEvent
+import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.obsidian.VaultRepository
+import com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR
+import com.jarvis2.app.ui.settings.BUBBLE_SHAPE
+import com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR
+import com.jarvis2.app.ui.settings.CALENDAR_GROUP_BY_DAY
+import com.jarvis2.app.ui.settings.CONTACT_PRESENTATION_STYLE
+import com.jarvis2.app.ui.settings.WEB_SEARCH_PRESENTATION_STYLE
+import com.jarvis2.app.ui.theme.BubbleStyle
 
 /** Outcome of trying to interpret a message as a device action rather than plain chat. */
 sealed interface CommandResult {
@@ -53,6 +61,51 @@ class CommandRouter(
 
     private val matchers: List<Matcher> by lazy {
         listOf(
+            // --- Reglages de presentation pilotables depuis le chat (voir
+            // ui/settings/SettingsScreen.kt pour les memes reglages via UI).
+            // Places en tete de liste : sans ca, des phrases comme "regroupe
+            // mon planning par jour" ou "contacts en detaille" seraient
+            // interceptees par les matchers de LECTURE plus generiques
+            // (agenda/contacts) plus bas, qui ne font que consulter.
+            Matcher(Regex("""bulles?.*(arrondies?|carr[ée]e?s?|pilule)""")) { t ->
+                val shape = when {
+                    Regex("pilule").containsMatchIn(t) -> "pill"
+                    Regex("carr[ée]e?s?").containsMatchIn(t) -> "square"
+                    else -> "rounded"
+                }
+                settings.set(BUBBLE_SHAPE, shape)
+                CommandResult.Handled("Forme des bulles changée : ${BubbleStyle.shapeLabel(shape)}.")
+            },
+            Matcher(Regex("""couleur.*(mes|moi).*(bulles?|messages?)|(mes|moi).*(bulles?|messages?).*couleur""")) { t ->
+                setBubbleColorFromText(t, forUser = true)
+            },
+            Matcher(Regex("""couleur.*(jarvis|tes|assistant).*(bulles?|messages?)|(jarvis|tes|assistant).*(bulles?|messages?).*couleur""")) { t ->
+                setBubbleColorFromText(t, forUser = false)
+            },
+            Matcher(Regex("""planning.*(regroupe?|group[ée]).*jour|regroupe.*planning.*jour""")) {
+                settings.set(CALENDAR_GROUP_BY_DAY, "true")
+                CommandResult.Handled("Planning regroupé par jour.")
+            },
+            Matcher(Regex("""planning.*(liste simple|à plat|a plat|sans regroupement)""")) {
+                settings.set(CALENDAR_GROUP_BY_DAY, "false")
+                CommandResult.Handled("Planning affiché en liste simple.")
+            },
+            Matcher(Regex("""contacts?.*(détaillé|detaille|détail|detail|avec.*numéro|avec.*numero)""")) {
+                settings.set(CONTACT_PRESENTATION_STYLE, "detailed")
+                CommandResult.Handled("Présentation des contacts : détaillée (avec numéro).")
+            },
+            Matcher(Regex("""contacts?.*(compact|sans détail|sans detail)""")) {
+                settings.set(CONTACT_PRESENTATION_STYLE, "compact")
+                CommandResult.Handled("Présentation des contacts : compacte.")
+            },
+            Matcher(Regex("""(recherche web|résultats? web|resultats? web).*(détaillé|detaille|détail|detail)""")) {
+                settings.set(WEB_SEARCH_PRESENTATION_STYLE, "detailed")
+                CommandResult.Handled("Présentation des résultats de recherche web : détaillée.")
+            },
+            Matcher(Regex("""(recherche web|résultats? web|resultats? web).*(compact|simple)""")) {
+                settings.set(WEB_SEARCH_PRESENTATION_STYLE, "compact")
+                CommandResult.Handled("Présentation des résultats de recherche web : compacte.")
+            },
             Matcher(Regex("(allume|active).*(torche|lampe|flash)")) {
                 integrations.flashlight.setTorch(true)
                 CommandResult.Handled("Torche activée.")
@@ -117,7 +170,7 @@ class CommandRouter(
                 if (events.isEmpty()) {
                     CommandResult.Handled("Aucun événement à venir dans l'agenda.")
                 } else {
-                    val groupByDay = (settings.get(com.jarvis2.app.ui.settings.CALENDAR_GROUP_BY_DAY) ?: "true") == "true"
+                    val groupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true"
                     CommandResult.Handled(formatEvents(events, groupByDay))
                 }
             },
@@ -128,8 +181,12 @@ class CommandRouter(
             },
             Matcher(Regex("(liste|montre|affiche).*(mes )?contacts")) {
                 val contacts = integrations.contacts.listContacts(limit = 15)
-                if (contacts.isEmpty()) CommandResult.Handled("Aucun contact trouvé (ou permission Contacts non accordée).")
-                else CommandResult.Handled("Contacts (${contacts.size}) : " + contacts.joinToString(", ") { it.name })
+                if (contacts.isEmpty()) {
+                    CommandResult.Handled("Aucun contact trouvé (ou permission Contacts non accordée).")
+                } else {
+                    val detailed = (settings.get(CONTACT_PRESENTATION_STYLE) ?: "compact") == "detailed"
+                    CommandResult.Handled(formatContacts(contacts, detailed))
+                }
             },
             Matcher(Regex("cherche.*contact")) { t ->
                 val query = extractAfter(t, listOf("contact"))
@@ -269,6 +326,51 @@ class CommandRouter(
             if (m > 0) append("${m}min")
             if (s > 0 || (h == 0 && m == 0)) append("${s}s")
         }
+    }
+
+    /**
+     * Applique une couleur de bulle (utilisateur ou assistant) detectee dans
+     * [text] via [extractColorId]. Utilise par les deux matchers "couleur de
+     * mes bulles" / "couleur des bulles de Jarvis" tout en haut de la liste
+     * de matchers -- factorise ici pour ne pas dupliquer la logique.
+     */
+    private suspend fun setBubbleColorFromText(text: String, forUser: Boolean): CommandResult {
+        val color = extractColorId(text)
+            ?: return CommandResult.Handled("Précise une couleur : cyan, or, rouge, violet ou vert.")
+        val key = if (forUser) BUBBLE_USER_COLOR else BUBBLE_ASSISTANT_COLOR
+        settings.set(key, color)
+        val target = if (forUser) "tes messages" else "les messages de Jarvis"
+        return CommandResult.Handled("Couleur de $target changée en ${BubbleStyle.colorLabel(color)}.")
+    }
+
+    /** Detecte un identifiant de couleur parmi la palette de [BubbleStyle.colorOptions]. */
+    private fun extractColorId(text: String): String? = when {
+        Regex("""\bor\b|dor[ée]e?s?|gold""").containsMatchIn(text) -> "gold"
+        Regex("rouge|red").containsMatchIn(text) -> "red"
+        Regex("violet|purple").containsMatchIn(text) -> "violet"
+        Regex("vert|green").containsMatchIn(text) -> "green"
+        Regex("cyan").containsMatchIn(text) -> "cyan"
+        else -> null
+    }
+
+    /**
+     * Presentation des contacts (voir ui/settings/SettingsScreen.kt : reglage
+     * "Présentation des contacts"). Compacte par defaut (juste les noms,
+     * comportement historique) ou detaillee (nom + numero, une ligne par
+     * contact) -- necessite que ContactsRepository.listContacts() ait bien
+     * peuple le numero (voir integrations/ContactsRepository.kt).
+     */
+    private fun formatContacts(contacts: List<Contact>, detailed: Boolean): String {
+        if (!detailed) {
+            return "Contacts (${contacts.size}) : " + contacts.joinToString(", ") { it.name }
+        }
+        return buildString {
+            appendLine("Contacts (${contacts.size}) :")
+            contacts.forEach { c ->
+                val phone = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
+                appendLine("👤 ${c.name} — $phone")
+            }
+        }.trim()
     }
 
     /**
