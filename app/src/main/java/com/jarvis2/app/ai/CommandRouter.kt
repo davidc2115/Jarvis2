@@ -58,6 +58,30 @@ class CommandRouter(
                 integrations.flashlight.setTorch(false)
                 CommandResult.Handled("Torche éteinte.")
             },
+            Matcher(Regex("(reveil|réveil|alarme|reveille-moi|réveille-moi)")) { t ->
+                val time = extractTime(t)
+                if (time == null) {
+                    CommandResult.Handled("Précise l'heure du réveil, par exemple \"mets un réveil à 7h30\".")
+                } else {
+                    val (hour, minute) = time
+                    val label = extractAfter(t, listOf("pour", "intitulé", "intitule", "appelé", "appele"))
+                    val ok = integrations.alarm.setAlarm(hour, minute, label)
+                    val timeLabel = "${hour}h${minute.toString().padStart(2, '0')}"
+                    if (ok) CommandResult.Handled("Réveil réglé à $timeLabel.")
+                    else CommandResult.Handled("Impossible de régler le réveil (aucune application Horloge trouvée, ou permission refusée).")
+                }
+            },
+            Matcher(Regex("(minuteur|minuterie|compte a rebours|compte à rebours|chronometre|chronomètre)")) { t ->
+                val seconds = extractDurationSeconds(t)
+                if (seconds == null || seconds <= 0) {
+                    CommandResult.Handled("Précise la durée du minuteur, par exemple \"minuteur de 10 minutes\".")
+                } else {
+                    val label = extractAfter(t, listOf("pour", "intitulé", "intitule", "appelé", "appele"))
+                    val ok = integrations.alarm.setTimer(seconds, label)
+                    if (ok) CommandResult.Handled("Minuteur de ${formatDuration(seconds)} lancé.")
+                    else CommandResult.Handled("Impossible de lancer le minuteur (aucune application Horloge trouvée, ou permission refusée).")
+                }
+            },
             Matcher(Regex("(active|ouvre).*bluetooth")) {
                 integrations.bluetooth.requestEnable()
                 CommandResult.Handled("Ouverture des réglages Bluetooth pour activation.")
@@ -166,6 +190,48 @@ class CommandRouter(
                 else CommandResult.Handled("Je me souviens : " + relevant.joinToString(" | ") { it.text.take(80) })
             },
         )
+    }
+
+    /** Detecte une heure du type "7h30", "7h", "19:45", "midi", "minuit". */
+    private fun extractTime(text: String): Pair<Int, Int>? {
+        Regex("""(\d{1,2})\s*[h:]\s*(\d{1,2})?""").find(text)?.let { m ->
+            val hour = m.groupValues[1].toIntOrNull()
+            val minute = m.groupValues[2].ifBlank { "0" }.toIntOrNull()
+            if (hour != null && minute != null && hour in 0..23 && minute in 0..59) return hour to minute
+        }
+        if (Regex("""\bmidi\b""").containsMatchIn(text)) return 12 to 0
+        if (Regex("""\bminuit\b""").containsMatchIn(text)) return 0 to 0
+        return null
+    }
+
+    /** Additionne heures/minutes/secondes mentionnees (n'importe quel sous-ensemble) en secondes totales. */
+    private fun extractDurationSeconds(text: String): Int? {
+        var total = 0
+        var found = false
+        Regex("""(\d+)\s*(heures?|h\b)""").find(text)?.let {
+            total += it.groupValues[1].toInt() * 3600
+            found = true
+        }
+        Regex("""(\d+)\s*(minutes?|min\b)""").find(text)?.let {
+            total += it.groupValues[1].toInt() * 60
+            found = true
+        }
+        Regex("""(\d+)\s*(secondes?|sec\b)""").find(text)?.let {
+            total += it.groupValues[1].toInt()
+            found = true
+        }
+        return if (found) total else null
+    }
+
+    private fun formatDuration(totalSeconds: Int): String {
+        val h = totalSeconds / 3600
+        val m = (totalSeconds % 3600) / 60
+        val s = totalSeconds % 60
+        return buildString {
+            if (h > 0) append("${h}h")
+            if (m > 0) append("${m}min")
+            if (s > 0 || (h == 0 && m == 0)) append("${s}s")
+        }
     }
 
     private fun extractAfter(text: String, keywords: List<String>): String? {

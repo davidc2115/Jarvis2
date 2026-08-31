@@ -10,4 +10,5 @@ class IntegrationsRouter(
     val contacts: ContactsRepository,
     val mail: MailComposer,
     val storage: StorageAccess,
+    val alarm: AlarmController,
 )

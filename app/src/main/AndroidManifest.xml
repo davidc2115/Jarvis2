@@ -50,6 +50,11 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Reveils/minuteurs : delegue a l'appli Horloge via AlarmClock.ACTION_SET_ALARM /
+         ACTION_SET_TIMER (voir integrations/AlarmController.kt). Sans cette permission,
+         ces Intents echouent avec "Permission Denial". -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
     <application
         android:name=".Jarvis2Application"
         android:allowBackup="false"

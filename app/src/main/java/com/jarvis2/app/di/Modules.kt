@@ -13,6 +13,7 @@ import com.jarvis2.app.filegen.KmlGenerator
 import com.jarvis2.app.filegen.PdfGenerator
 import com.jarvis2.app.filegen.XlsxGenerator
 import com.jarvis2.app.filegen.ZipGenerator
+import com.jarvis2.app.integrations.AlarmController
 import com.jarvis2.app.integrations.BluetoothController
 import com.jarvis2.app.integrations.CalendarRepository
 import com.jarvis2.app.integrations.ContactsRepository
@@ -59,7 +60,8 @@ val integrationsModule = module {
     single { ContactsRepository(androidContext()) }
     single { MailComposer(androidContext()) }
     single { StorageAccess(androidContext()) }
-    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { AlarmController(androidContext()) }
+    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 
     single { PdfGenerator(androidContext()) }
     single { ZipGenerator(androidContext()) }
