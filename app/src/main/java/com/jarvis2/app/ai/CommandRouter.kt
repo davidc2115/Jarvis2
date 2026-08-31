@@ -212,6 +212,34 @@ class CommandRouter(
                     CommandResult.Handled(renderEvents(events, period.label))
                 }
             },
+            // --- Fiche contact dans le vault (dossier Contacts/) : place AVANT le
+            // matcher generique "crée un contact" ci-dessous car "fiche contact"
+            // doit creer une NOTE vault a partir d'un contact existant du
+            // telephone, pas un nouveau contact telephone.
+            Matcher(Regex("(crée|génère|fait|ajoute|enregistre).*(fiche).*(contact)")) { t ->
+                val name = extractAfter(
+                    t,
+                    listOf("fiche contact pour", "fiche contact de", "fiche de contact pour", "fiche de contact de", "fiche pour", "fiche de"),
+                )
+                if (name == null) {
+                    CommandResult.Handled("Précise pour qui, par exemple « crée une fiche contact pour Marie ».")
+                } else {
+                    val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(name, ignoreCase = true) }
+                    when {
+                        matches.isEmpty() -> CommandResult.Handled("Aucun contact trouvé pour « $name » (ou permission Contacts non accordée).")
+                        matches.size > 1 -> CommandResult.Handled(
+                            "Plusieurs contacts correspondent à « $name » : " + matches.joinToString(", ") { it.name } + ". Précise lequel.",
+                        )
+                        else -> {
+                            val c = matches.first()
+                            val body = vault.autoLink(formatContactFicheBody(c), excludeTitle = c.name)
+                            vault.createFolder("Contacts")
+                            val note = vault.createNote(c.name, body = body, tags = setOf("contact"), folderPath = "Contacts")
+                            CommandResult.Handled("Fiche « ${note.title} » créée dans le vault (dossier Contacts).")
+                        }
+                    }
+                }
+            },
             Matcher(Regex("(crée|ajoute).*contact")) { t ->
                 val name = extractAfter(t, listOf("contact")) ?: "Nouveau contact"
                 integrations.contacts.createContact(name)
@@ -307,8 +335,24 @@ class CommandRouter(
             },
             Matcher(Regex("(crée|ajoute|nouvelle).*(note).*(vault|obsidian)|(vault|obsidian).*(crée|ajoute|nouvelle).*note")) { t ->
                 val titleGuess = extractAfter(t, listOf("intitulée", "appelée", "titre", "titrée")) ?: "Note Jarvis"
-                val note = vault.createNote(titleGuess, body = t)
-                CommandResult.Handled("Note « ${note.title} » créée dans le vault Obsidian.")
+                val folderGuess = extractAfter(t, listOf("dans le dossier", "dans le folder")).orEmpty()
+                val body = vault.autoLink(t, excludeTitle = titleGuess)
+                val note = vault.createNote(titleGuess, body = body, folderPath = folderGuess)
+                val where = if (folderGuess.isBlank()) "dans le vault Obsidian" else "dans le dossier « $folderGuess » du vault"
+                CommandResult.Handled("Note « ${note.title} » créée $where.")
+            },
+            // --- Dossiers du vault : "crée un dossier Projets (dans le vault)".
+            // Place ici, apres les commandes de note, avant renomme/supprime pour
+            // rester groupe avec le reste de la gestion Obsidian.
+            Matcher(Regex("(crée|ajoute|nouveau|nouvelle).*(dossier|folder).*(vault|obsidian)|(vault|obsidian).*(crée|ajoute|nouveau|nouvelle).*(dossier|folder)")) { t ->
+                val name = extractAfter(t, listOf("dossier", "folder"))
+                if (name == null) {
+                    CommandResult.Handled("Précise le nom du dossier, par exemple « crée un dossier Projets dans le vault ».")
+                } else {
+                    val ok = vault.createFolder(name)
+                    if (ok) CommandResult.Handled("Dossier « $name » créé dans le vault.")
+                    else CommandResult.Handled("Échec de la création du dossier « $name ».")
+                }
             },
             Matcher(Regex("(renomme).*note")) { t ->
                 val pair = extractRenamePair(t)
@@ -335,7 +379,7 @@ class CommandRouter(
                     if (existing == null) {
                         CommandResult.Handled("Aucune note trouvée pour « $query ».")
                     } else {
-                        vault.deleteNote(existing.fileName)
+                        vault.deleteNote(existing)
                         CommandResult.Handled("Note « ${existing.title} » supprimée.")
                     }
                 }
@@ -522,6 +566,19 @@ class CommandRouter(
      * dedie contrairement aux contacts/planning : un mail n'a qu'une seule
      * presentation utile ici (expediteur + objet + court extrait).
      */
+    /**
+     * Corps markdown d'une fiche contact enregistree dans le vault (dossier
+     * Contacts/, voir le matcher "fiche contact" plus haut) -- uniquement
+     * des vraies donnees du telephone, jamais rien d'invente, meme logique
+     * de prudence que formatSingleContact.
+     */
+    private fun formatContactFicheBody(c: Contact): String = buildString {
+        appendLine("# ${c.name}")
+        appendLine()
+        appendLine("- Telephone : ${c.phone?.takeIf { it.isNotBlank() } ?: "non renseigne"}")
+        appendLine("- Email : ${c.email?.takeIf { it.isNotBlank() } ?: "non renseigne"}")
+    }.trim()
+
     private fun formatMails(mails: List<MailSummary>): String {
         if (mails.isEmpty()) return "Aucun mail à afficher."
         return buildString {

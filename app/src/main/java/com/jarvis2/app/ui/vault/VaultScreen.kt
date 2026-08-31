@@ -117,6 +117,9 @@ private fun NoteRow(note: Note, onClick: () -> Unit) {
         onClick = onClick,
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            if (note.folderPath.isNotBlank()) {
+                Text("📁 ${note.folderPath}", style = MaterialTheme.typography.labelSmall, color = JarvisCyan)
+            }
             Text(note.title, style = MaterialTheme.typography.titleLarge)
             if (note.tags.isNotEmpty()) {
                 Text("#${note.tags.joinToString(" #")}", style = MaterialTheme.typography.labelSmall, color = JarvisGold)

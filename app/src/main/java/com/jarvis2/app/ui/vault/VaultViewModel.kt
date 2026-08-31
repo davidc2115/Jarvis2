@@ -52,7 +52,7 @@ class VaultViewModel(private val vaultRepository: VaultRepository) : ViewModel()
 
     fun deleteNote(note: Note) {
         viewModelScope.launch {
-            vaultRepository.deleteNote(note.fileName)
+            vaultRepository.deleteNote(note)
             if (_state.value.selected == note) select(null)
             refresh()
         }

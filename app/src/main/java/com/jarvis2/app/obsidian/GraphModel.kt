@@ -5,25 +5,58 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
+/** "🧠 Jarvis" is a virtual hub node (not a real note) that folders and root notes hang off, so the toile always has a visible center. */
+const val GRAPH_HUB_ID = "🧠 Jarvis"
+
+/** Prefixes a folder path so it can't collide with any real note title, and reads clearly as a folder in the toile. */
+fun folderNodeId(folderPath: String): String = "📁 $folderPath"
+
 data class GraphNode(
-    val id: String, // note title
+    val id: String, // note title, or a folder/hub id (see [folderNodeId] / [GRAPH_HUB_ID])
     var position: Offset,
     var velocity: Offset = Offset.Zero,
     val degree: Int, // number of connections, drives node radius
+    val isFolder: Boolean = false,
+    val isHub: Boolean = false,
+    /** Text shown under the node -- the folder path (without the icon prefix) or note title, for [isFolder]/plain nodes. Blank for the hub, which is labelled by [id] directly. */
+    val label: String = "",
 )
 
 data class GraphEdge(val fromId: String, val toId: String)
 
 data class Graph(val nodes: List<GraphNode>, val edges: List<GraphEdge>)
 
-/** Builds the full node/link graph of every note in the vault — "vue toile de chaque nœud, point, lien". */
+/**
+ * Builds the full node/link graph of the vault — "vue toile de chaque nœud,
+ * point, lien" — now hierarchical, not flat: a hub node ("🧠 Jarvis") at the
+ * center, one node per (sub)folder hanging off the hub, and every note
+ * hanging off its folder (or straight off the hub if it lives at the vault
+ * root), *in addition to* the existing `[[wikilink]]` edges between notes
+ * themselves. [relax] (force-directed layout) turns this edge set into a
+ * real hub → dossier → notes star layout on its own -- no bespoke geometry
+ * needed, the hub/folder attraction edges naturally pull everything into
+ * place while repulsion keeps siblings apart.
+ */
 fun buildGraph(notes: List<Note>, seed: Long = 42L): Graph {
     val random = Random(seed)
     val titles = notes.map { it.title }.toSet()
 
-    val edges = notes.flatMap { note ->
+    val linkEdges = notes.flatMap { note ->
         note.links.filter { it in titles && it != note.title }.map { GraphEdge(note.title, it) }
-    }.distinct()
+    }
+
+    val folders = notes.mapNotNull { it.folderPath.takeIf { p -> p.isNotBlank() } }.distinct().sorted()
+    val hierarchyEdges = buildList {
+        if (notes.isNotEmpty()) {
+            folders.forEach { add(GraphEdge(GRAPH_HUB_ID, folderNodeId(it))) }
+            notes.forEach { note ->
+                val parent = if (note.folderPath.isBlank()) GRAPH_HUB_ID else folderNodeId(note.folderPath)
+                add(GraphEdge(parent, note.title))
+            }
+        }
+    }
+
+    val edges = (hierarchyEdges + linkEdges).distinct()
 
     val degree = HashMap<String, Int>()
     edges.forEach { e ->
@@ -31,12 +64,19 @@ fun buildGraph(notes: List<Note>, seed: Long = 42L): Graph {
         degree[e.toId] = (degree[e.toId] ?: 0) + 1
     }
 
-    val nodes = notes.map { note ->
-        GraphNode(
-            id = note.title,
-            position = Offset(random.nextFloat() * 800f, random.nextFloat() * 800f),
-            degree = degree[note.title] ?: 0,
-        )
+    fun randomPos() = Offset(random.nextFloat() * 800f, random.nextFloat() * 800f)
+
+    val nodes = buildList {
+        if (notes.isNotEmpty()) {
+            add(GraphNode(id = GRAPH_HUB_ID, position = Offset(500f, 500f), degree = degree[GRAPH_HUB_ID] ?: 0, isHub = true, label = GRAPH_HUB_ID))
+        }
+        folders.forEach { f ->
+            val id = folderNodeId(f)
+            add(GraphNode(id = id, position = randomPos(), degree = degree[id] ?: 0, isFolder = true, label = "📁 $f"))
+        }
+        notes.forEach { note ->
+            add(GraphNode(id = note.title, position = randomPos(), degree = degree[note.title] ?: 0, label = note.title))
+        }
     }
 
     return Graph(nodes, edges)
