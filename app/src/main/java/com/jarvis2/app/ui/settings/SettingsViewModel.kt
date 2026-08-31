@@ -2,7 +2,6 @@ package com.jarvis2.app.ui.settings
 
 import android.content.Context
 import android.content.Intent
-import android.content.IntentSender
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -75,8 +74,8 @@ data class SettingsUiState(
     val gmailConnected: Boolean = false,
     val isConnectingGmail: Boolean = false,
     val gmailConnectError: String? = null,
-    /** Non-null quand Google exige un ecran de consentement -- l'UI doit le lancer via StartIntentSenderForResult puis appeler onGoogleAuthResult(). */
-    val pendingGmailAuthIntent: IntentSender? = null,
+    /** Non-null quand Google exige une confirmation -- l'UI doit le lancer via StartActivityForResult puis rappeler connectGmail(). */
+    val pendingGmailAuthIntent: Intent? = null,
 )
 
 class SettingsViewModel(
@@ -181,14 +180,16 @@ class SettingsViewModel(
 
     /**
      * Lance (ou confirme silencieusement) la connexion Gmail via
-     * GoogleAuthController. Si Google exige un ecran de consentement,
-     * [SettingsUiState.pendingGmailAuthIntent] se remplit et
-     * SettingsScreen.kt est charge de le lancer via
-     * ActivityResultContracts.StartIntentSenderForResult, puis d'appeler
-     * [onGoogleAuthResult] avec l'Intent recu.
+     * GoogleAuthController, en reutilisant un compte Google deja present
+     * sur le telephone (pas d'ecran de connexion separe). Si Google exige
+     * une confirmation ponctuelle, [SettingsUiState.pendingGmailAuthIntent]
+     * se remplit et SettingsScreen.kt le lance via
+     * ActivityResultContracts.StartActivityForResult ; une fois cet ecran
+     * ferme, il suffit de rappeler [connectGmail] (pas de parsing de
+     * resultat necessaire, contrairement a l'ancienne Authorization API).
      */
     fun connectGmail() = viewModelScope.launch {
-        _state.value = _state.value.copy(isConnectingGmail = true, gmailConnectError = null)
+        _state.value = _state.value.copy(isConnectingGmail = true, gmailConnectError = null, pendingGmailAuthIntent = null)
         val result = googleAuth.getAccessToken()
         result.fold(
             onSuccess = {
@@ -196,7 +197,7 @@ class SettingsViewModel(
             },
             onFailure = { e ->
                 if (e is GoogleAuthNeedsUserActionException) {
-                    _state.value = _state.value.copy(isConnectingGmail = false, pendingGmailAuthIntent = e.intentSender)
+                    _state.value = _state.value.copy(isConnectingGmail = false, pendingGmailAuthIntent = e.intent)
                 } else {
                     _state.value = _state.value.copy(isConnectingGmail = false, gmailConnectError = e.message)
                 }
@@ -204,16 +205,8 @@ class SettingsViewModel(
         )
     }
 
-    /** Appele par SettingsScreen.kt une fois l'ecran de consentement Google ferme (succes ou annulation). */
-    fun onGoogleAuthResult(data: Intent?) = viewModelScope.launch {
-        _state.value = _state.value.copy(pendingGmailAuthIntent = null, isConnectingGmail = true)
-        val result = googleAuth.parseAuthorizationResult(data)
-        _state.value = _state.value.copy(
-            isConnectingGmail = false,
-            gmailConnected = result.isSuccess,
-            gmailConnectError = result.exceptionOrNull()?.message,
-        )
-    }
+    /** Appele par SettingsScreen.kt une fois l'ecran de confirmation Google ferme (succes ou annulation) -- relance simplement connectGmail(). */
+    fun onGoogleAuthResult(data: Intent?) = connectGmail()
 
     fun clearPendingGmailAuthIntent() {
         _state.value = _state.value.copy(pendingGmailAuthIntent = null)

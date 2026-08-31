@@ -1,7 +1,6 @@
 package com.jarvis2.app.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -49,12 +48,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     // faut un (voir SettingsViewModel.connectGmail/pendingGmailAuthIntent) ; le resultat
     // (accorde ou annule) revient dans viewModel.onGoogleAuthResult.
     val gmailAuthLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult(),
+        contract = ActivityResultContracts.StartActivityForResult(),
     ) { result -> viewModel.onGoogleAuthResult(result.data) }
 
     LaunchedEffect(state.pendingGmailAuthIntent) {
-        state.pendingGmailAuthIntent?.let { intentSender ->
-            gmailAuthLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+        state.pendingGmailAuthIntent?.let { intent ->
+            gmailAuthLauncher.launch(intent)
             viewModel.clearPendingGmailAuthIntent()
         }
     }
