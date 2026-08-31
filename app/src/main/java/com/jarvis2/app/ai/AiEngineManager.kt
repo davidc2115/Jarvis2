@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Picks the best available [LocalAiEngine] at runtime and exposes a single
@@ -66,32 +68,50 @@ class AiEngineManager(private val context: Context, private val settings: Settin
 
     private var current: LocalAiEngine? = null
 
+    // Protege le corps de ensureReady() contre les appels concurrents. Sans
+    // ca, ChatViewModel.init lance ensureReady() en arriere-plan des
+    // l'ouverture de l'ecran Chat, et si l'utilisateur envoie un message
+    // avant la fin (generate() appelle aussi ensureReady() si current ==
+    // null), deux appels a prepare()/telechargement pouvaient s'executer en
+    // parallele sur le meme moteur (SmolVLM2 le plus souvent, puisque c'est
+    // le seul qui marche sur la plupart des telephones) -- deux ecritures
+    // simultanees dans le meme fichier .part pouvaient corrompre le modele
+    // et laisser l'utilisateur sans AUCUN moteur fonctionnel, expliquant en
+    // partie "impossible d'avoir une vraie conversation".
+    private val ensureReadyMutex = Mutex()
+
     suspend fun ensureReady(): EngineInfo {
         current?.let { return it.info() }
 
-        val orderedChain = preferredFirstChain()
-        for (engine in orderedChain) {
-            // SmolVLM2's prepare() can take a while on first run (model
-            // download) -- surface an interim "downloading" status right
-            // away so the UI (which reads activeEngine.notes) doesn't sit on
-            // a stale "Initialisation…" the whole time.
-            _activeEngine.value = engine.info()
-            val result = engine.prepare()
-            if (result.isSuccess) {
-                current = engine
-                _activeEngine.value = engine.info()
-                return engine.info()
-            }
-        }
+        return ensureReadyMutex.withLock {
+            // Un autre appelant a peut-etre deja termine pendant qu'on
+            // attendait le verrou -- pas la peine de refaire tout le travail.
+            current?.let { return@withLock it.info() }
 
-        // Aucun moteur n'a reussi son prepare(): on retombe sur le dernier de
-        // la chaine (SmolVLM2, qui reussit quasiment toujours puisqu'il se
-        // telecharge lui-meme) pour que l'UI affiche un message utile plutot
-        // que de planter.
-        val last = engineChain.last()
-        current = last
-        _activeEngine.value = last.info()
-        return last.info()
+            val orderedChain = preferredFirstChain()
+            for (engine in orderedChain) {
+                // SmolVLM2's prepare() can take a while on first run (model
+                // download) -- surface an interim "downloading" status right
+                // away so the UI (which reads activeEngine.notes) doesn't sit on
+                // a stale "Initialisation…" the whole time.
+                _activeEngine.value = engine.info()
+                val result = engine.prepare()
+                if (result.isSuccess) {
+                    current = engine
+                    _activeEngine.value = engine.info()
+                    return@withLock engine.info()
+                }
+            }
+
+            // Aucun moteur n'a reussi son prepare(): on retombe sur le dernier de
+            // la chaine (SmolVLM2, qui reussit quasiment toujours puisqu'il se
+            // telecharge lui-meme) pour que l'UI affiche un message utile plutot
+            // que de planter.
+            val last = engineChain.last()
+            current = last
+            _activeEngine.value = last.info()
+            last.info()
+        }
     }
 
     /**
