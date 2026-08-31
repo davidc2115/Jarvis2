@@ -42,34 +42,37 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     Scaffold(topBar = { TopAppBar(title = { Text("Réglages", color = JarvisCyan) }) }) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
             Text("Moteur IA", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
-            Text(state.engine?.displayName ?: "…")
+            Text("Actif : " + (state.engine?.displayName ?: "…"))
             Text(state.engine?.notes.orEmpty(), style = MaterialTheme.typography.labelSmall)
-            Button(onClick = { viewModel.refreshEngine() }, modifier = Modifier.padding(top = 8.dp)) { Text("Ré-détecter") }
             Text(
-                "Par défaut, Jarvis télécharge et utilise automatiquement SmolVLM2 (léger, texte + image, aucune connexion/compte requis) — pas besoin de faire quoi que ce soit ici pour ça.",
+                "Automatique essaie Gemini Nano (si le téléphone le supporte), sinon SmolVLM2 " +
+                    "(léger, se télécharge tout seul, aucun compte requis). Choisir un moteur ci-dessous " +
+                    "force Jarvis à s'en servir en priorité — le téléchargement (si besoin) démarre " +
+                    "aussitôt, sans bouton séparé. Aucune de ces options ne nécessite de compte ni de " +
+                    "jeton (contrairement à l'ancien Gemma 3, verrouillé par Google).",
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            Text("Modèle IA local optionnel", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
-            Text(
-                "Alternatives à SmolVLM2, aucune ne nécessite de compte ni de jeton (contrairement à " +
-                    "l'ancien Gemma 3, verrouillé par Google) : le téléchargement démarre dès que tu " +
-                    "choisis un modèle ci-dessous.",
-                style = MaterialTheme.typography.labelSmall,
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 FilterChip(
-                    selected = state.selectedLocalModel == "none",
-                    onClick = { viewModel.setSelectedLocalModel("none") },
-                    label = { Text("Aucun") },
+                    selected = state.preferredEngineId == "auto",
+                    onClick = { viewModel.setPreferredEngine("auto") },
+                    label = { Text("Automatique") },
+                )
+                FilterChip(
+                    selected = state.preferredEngineId == "aicore-gemini-nano",
+                    onClick = { viewModel.setPreferredEngine("aicore-gemini-nano") },
+                    label = { Text("Gemini Nano") },
+                )
+                FilterChip(
+                    selected = state.preferredEngineId == "smolvlm2-llamacpp",
+                    onClick = { viewModel.setPreferredEngine("smolvlm2-llamacpp") },
+                    label = { Text("SmolVLM2") },
                 )
                 LocalGgufModel.entries.forEach { model ->
                     FilterChip(
-                        selected = state.selectedLocalModel == model.id,
-                        onClick = { viewModel.setSelectedLocalModel(model.id) },
+                        selected = state.preferredEngineId == "selectable-gguf" && state.selectedLocalModel == model.id,
+                        onClick = { viewModel.setPreferredEngine("selectable-gguf", model.id) },
                         label = { Text(model.displayName) },
                     )
                 }
@@ -80,6 +83,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
             state.localModelDownloadError?.let { error ->
                 Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
             }
+            Button(onClick = { viewModel.refreshEngine() }, modifier = Modifier.padding(top = 8.dp)) { Text("Ré-détecter") }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

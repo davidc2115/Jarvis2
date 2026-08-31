@@ -5,6 +5,7 @@ import com.jarvis2.app.ai.aicore.AiCoreEngine
 import com.jarvis2.app.ai.gguf.SelectableLlmEngine
 import com.jarvis2.app.ai.smolvlm.SmolVlmEngine
 import com.jarvis2.app.data.SettingsDataStore
+import com.jarvis2.app.ui.settings.PREFERRED_ENGINE_ID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,16 @@ import kotlinx.coroutines.flow.asStateFlow
  * AICore's experimental SDK, see task #261), it transparently moves on to
  * the next engine in the chain and retries the same request, instead of
  * surfacing the raw SDK error to the user.
+ *
+ * IMPORTANT — explicit user choice overrides the chain order above: if
+ * Settings has `PREFERRED_ENGINE_ID` set to something other than "auto"
+ * (see ui/settings/SettingsScreen.kt, "Moteur IA"), [ensureReady] tries
+ * that exact engine FIRST, before falling back to the normal chain order if
+ * it fails. Without this override, a user who explicitly picked Qwen/Phi/
+ * Dolphin in Settings would see it silently ignored whenever AICore already
+ * works on their device (AICore always wins the fixed chain above) — no
+ * download would ever start for their actual choice. This was a real bug,
+ * not a hypothetical.
  */
 class AiEngineManager(private val context: Context, private val settings: SettingsDataStore) {
 
@@ -58,7 +69,8 @@ class AiEngineManager(private val context: Context, private val settings: Settin
     suspend fun ensureReady(): EngineInfo {
         current?.let { return it.info() }
 
-        for (engine in engineChain) {
+        val orderedChain = preferredFirstChain()
+        for (engine in orderedChain) {
             // SmolVLM2's prepare() can take a while on first run (model
             // download) -- surface an interim "downloading" status right
             // away so the UI (which reads activeEngine.notes) doesn't sit on
@@ -80,6 +92,19 @@ class AiEngineManager(private val context: Context, private val settings: Settin
         current = last
         _activeEngine.value = last.info()
         return last.info()
+    }
+
+    /**
+     * [engineChain] re-ordered so the user's explicit [PREFERRED_ENGINE_ID]
+     * (if set to anything other than "auto") is tried first, with the rest
+     * of the normal chain kept as a fallback in case that specific engine
+     * can't actually get ready (e.g. no network to download a GGUF model).
+     * See the "IMPORTANT" note in the class doc for why this exists.
+     */
+    private suspend fun preferredFirstChain(): List<LocalAiEngine> {
+        val preferredId = settings.get(PREFERRED_ENGINE_ID)?.takeIf { it != "auto" } ?: return engineChain
+        val preferred = engineChain.firstOrNull { it.info().id == preferredId } ?: return engineChain
+        return listOf(preferred) + engineChain.filter { it !== preferred }
     }
 
     suspend fun generate(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Result<String> {

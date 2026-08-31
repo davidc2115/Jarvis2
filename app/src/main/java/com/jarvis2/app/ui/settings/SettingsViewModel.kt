@@ -22,6 +22,17 @@ private val WEB_SEARCH_ENDPOINT = stringPreferencesKey("web_search_endpoint")
 // gated -- aucun des trois choix ici ne demande de compte ni de jeton.
 val SELECTED_LOCAL_MODEL = stringPreferencesKey("selected_local_model")
 
+// Moteur IA prefere explicitement par l'utilisateur : "auto" (defaut,
+// laisse AiEngineManager choisir -- AICore puis le modele optionnel puis
+// SmolVLM2, voir sa doc de classe) ou l'un des EngineInfo.id exacts :
+// "aicore-gemini-nano" / "smolvlm2-llamacpp" / "selectable-gguf" (dans ce
+// dernier cas, SELECTED_LOCAL_MODEL determine LEQUEL des trois modeles GGUF
+// charger). Corrige un bug reel : sans ce reglage, AiEngineManager s'arrete
+// toujours au premier moteur qui reussit dans l'ordre fixe -- si AICore
+// fonctionne sur l'appareil, le choix explicite de Qwen/Phi/Dolphin dans
+// Reglages n'etait alors JAMAIS tente (aucun telechargement ne demarrait).
+val PREFERRED_ENGINE_ID = stringPreferencesKey("preferred_engine_id")
+
 // Apparence des bulles de chat (voir ui/chat/ChatScreen.kt) : forme et couleur
 // d'accent choisies independamment pour les messages utilisateur/assistant.
 // Stockees comme identifiants de preset ("rounded"/"square"/"pill" et
@@ -48,6 +59,7 @@ val WEB_SEARCH_PRESENTATION_STYLE = stringPreferencesKey("web_search_presentatio
 data class SettingsUiState(
     val engine: EngineInfo? = null,
     val webSearchApiKey: String = "",
+    val preferredEngineId: String = "auto",
     val selectedLocalModel: String = "none",
     val isDownloadingLocalModel: Boolean = false,
     val localModelDownloadError: String? = null,
@@ -73,6 +85,7 @@ class SettingsViewModel(
             _state.value = _state.value.copy(
                 engine = engineManager.ensureReady(),
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
+                preferredEngineId = settings.get(PREFERRED_ENGINE_ID) ?: "auto",
                 selectedLocalModel = settings.get(SELECTED_LOCAL_MODEL) ?: "none",
                 bubbleShape = settings.get(BUBBLE_SHAPE) ?: "rounded",
                 bubbleUserColor = settings.get(BUBBLE_USER_COLOR) ?: "gold",
@@ -94,17 +107,21 @@ class SettingsViewModel(
     }
 
     /**
-     * Choisit (ou desactive avec "none") un modele local optionnel du
-     * catalogue [com.jarvis2.app.ai.gguf.LocalGgufModel] -- remplace
-     * l'ancien downloadGemma() gated. Le telechargement (si necessaire)
-     * demarre automatiquement lors du prochain engineManager.refresh(),
-     * exactement comme SmolVLM2 le fait deja pour son propre modele : pas
-     * besoin d'un bouton "telecharger" separe.
+     * Choisit explicitement quel moteur IA utiliser -- "auto" pour laisser
+     * AiEngineManager decider (comportement historique), ou l'id exact d'un
+     * moteur ("aicore-gemini-nano" / "smolvlm2-llamacpp" / "selectable-gguf").
+     * [ggufModelId] n'est fourni que pour "selectable-gguf", pour preciser
+     * LEQUEL des trois modeles du catalogue (voir ai/gguf/LocalGgufModel.kt).
+     * Le telechargement (si necessaire) demarre automatiquement lors du
+     * refresh() qui suit, exactement comme SmolVLM2 le fait deja pour son
+     * propre modele : pas besoin d'un bouton "telecharger" separe.
      */
-    fun setSelectedLocalModel(modelId: String) = viewModelScope.launch {
-        settings.set(SELECTED_LOCAL_MODEL, modelId)
+    fun setPreferredEngine(engineId: String, ggufModelId: String? = null) = viewModelScope.launch {
+        settings.set(PREFERRED_ENGINE_ID, engineId)
+        if (ggufModelId != null) settings.set(SELECTED_LOCAL_MODEL, ggufModelId)
         _state.value = _state.value.copy(
-            selectedLocalModel = modelId,
+            preferredEngineId = engineId,
+            selectedLocalModel = ggufModelId ?: _state.value.selectedLocalModel,
             isDownloadingLocalModel = true,
             localModelDownloadError = null,
         )
@@ -112,7 +129,7 @@ class SettingsViewModel(
         _state.value = _state.value.copy(
             engine = info,
             isDownloadingLocalModel = false,
-            localModelDownloadError = if (modelId != "none" && info.id != "selectable-gguf") info.notes else null,
+            localModelDownloadError = if (engineId != "auto" && info.id != engineId) info.notes else null,
         )
     }
 
