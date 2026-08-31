@@ -6,6 +6,7 @@ import com.jarvis2.app.integrations.CalendarEvent
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.MailSummary
+import com.jarvis2.app.integrations.WeatherReport
 import com.jarvis2.app.obsidian.Note
 import com.jarvis2.app.obsidian.VaultRepository
 import com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR
@@ -182,6 +183,19 @@ class CommandRouter(
                 val loc = integrations.location.lastKnownLocation()
                 if (loc == null) CommandResult.Handled("Position indisponible pour le moment (GPS/permission).")
                 else CommandResult.Handled("Position: ${loc.latitude}, ${loc.longitude} (précision ${loc.accuracy}m).")
+            },
+            Matcher(Regex("""(météo|meteo|quel temps|il fait quel temps|va-t-il pleuvoir|va t il pleuvoir|température dehors|temperature dehors|température qu'il fait|il fait combien dehors)""")) {
+                val loc = integrations.location.lastKnownLocation()
+                    ?: kotlinx.coroutines.withTimeoutOrNull(8_000) { integrations.location.requestSingleFreshLocation() }
+                if (loc == null) {
+                    CommandResult.Handled("Position GPS indisponible pour la météo (vérifie que la localisation est activée et autorisée).")
+                } else {
+                    val result = integrations.weather.currentWeather(loc.latitude, loc.longitude)
+                    result.fold(
+                        onSuccess = { w -> CommandResult.Handled(formatWeather(w)) },
+                        onFailure = { e -> CommandResult.Handled("Impossible de récupérer la météo : ${e.message}") },
+                    )
+                }
             },
             Matcher(Regex("(crée|ajoute|planifie).*(rendez-vous|événement|evenement|rappel|réunion)")) { t ->
                 val title = extractAfter(t, listOf("rendez-vous", "événement", "evenement", "rappel", "réunion")) ?: "Nouvel événement Jarvis"
@@ -471,6 +485,13 @@ class CommandRouter(
                 if (m.snippet.isNotBlank()) appendLine("   ${m.snippet}")
             }
         }.trim()
+    }
+
+    /** Formate un releve meteo (voir integrations/WeatherController.kt) pour affichage chat. */
+    private fun formatWeather(w: WeatherReport): String = buildString {
+        append("Météo à ${w.locationLabel} : ${w.description}, ${Math.round(w.temperatureC)}°C")
+        w.feelsLikeC?.let { append(" (ressenti ${Math.round(it)}°C)") }
+        append(", vent ${Math.round(w.windKmh)} km/h.")
     }
 
     /**

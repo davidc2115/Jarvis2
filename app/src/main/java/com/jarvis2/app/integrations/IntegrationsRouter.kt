@@ -12,4 +12,5 @@ class IntegrationsRouter(
     val storage: StorageAccess,
     val alarm: AlarmController,
     val mailReader: MailReader,
+    val weather: WeatherController,
 )

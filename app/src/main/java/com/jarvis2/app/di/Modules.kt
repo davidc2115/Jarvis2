@@ -21,6 +21,7 @@ import com.jarvis2.app.integrations.FlashlightController
 import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.LocationProvider
+import com.jarvis2.app.integrations.WeatherController
 import com.jarvis2.app.integrations.MailComposer
 import com.jarvis2.app.integrations.MailReader
 import com.jarvis2.app.integrations.StorageAccess
@@ -58,6 +59,7 @@ val integrationsModule = module {
     single { BluetoothController(androidContext()) }
     single { WifiController(androidContext()) }
     single { LocationProvider(androidContext()) }
+    single { WeatherController() }
     single { CalendarRepository(androidContext()) }
     single { ContactsRepository(androidContext()) }
     single { MailComposer(androidContext()) }
@@ -65,7 +67,7 @@ val integrationsModule = module {
     single { AlarmController(androidContext()) }
     single { GoogleAuthController(androidContext()) }
     single { MailReader(get()) }
-    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 
     single { PdfGenerator(androidContext()) }
     single { ZipGenerator(androidContext()) }
