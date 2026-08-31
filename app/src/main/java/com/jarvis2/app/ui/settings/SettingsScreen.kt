@@ -2,7 +2,9 @@ package com.jarvis2.app.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -11,9 +13,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -22,9 +26,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.jarvis2.app.ui.theme.BubbleStyle
 import com.jarvis2.app.ui.theme.JarvisCyan
 import com.jarvis2.app.ui.theme.JarvisGold
 import org.koin.androidx.compose.koinViewModel
@@ -111,6 +117,57 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             Button(onClick = { viewModel.setWebSearchApiKey(apiKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Apparence des bulles de chat", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Text("Forme", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                BubbleStyle.shapeOptions.forEach { shapeId ->
+                    FilterChip(
+                        selected = state.bubbleShape == shapeId,
+                        onClick = { viewModel.setBubbleShape(shapeId) },
+                        label = { Text(BubbleStyle.shapeLabel(shapeId)) },
+                    )
+                }
+            }
+            Text("Couleur — mes messages", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                BubbleStyle.colorOptions.forEach { colorId ->
+                    FilterChip(
+                        selected = state.bubbleUserColor == colorId,
+                        onClick = { viewModel.setBubbleUserColor(colorId) },
+                        label = { Text(BubbleStyle.colorLabel(colorId), color = BubbleStyle.color(colorId)) },
+                    )
+                }
+            }
+            Text("Couleur — messages de Jarvis", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                BubbleStyle.colorOptions.forEach { colorId ->
+                    FilterChip(
+                        selected = state.bubbleAssistantColor == colorId,
+                        onClick = { viewModel.setBubbleAssistantColor(colorId) },
+                        label = { Text(BubbleStyle.colorLabel(colorId), color = BubbleStyle.color(colorId)) },
+                    )
+                }
+            }
+            Text(
+                "S'applique à la prochaine ouverture de l'écran Chat.",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Présentation du planning", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = state.calendarGroupByDay, onCheckedChange = { viewModel.setCalendarGroupByDay(it) })
+                Text(
+                    "Regrouper les événements par jour (sinon liste simple)",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
             Text(

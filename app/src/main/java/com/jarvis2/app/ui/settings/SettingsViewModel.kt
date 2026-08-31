@@ -18,6 +18,20 @@ private val WEB_SEARCH_API_KEY = stringPreferencesKey("web_search_api_key")
 private val WEB_SEARCH_ENDPOINT = stringPreferencesKey("web_search_endpoint")
 private val HUGGING_FACE_TOKEN = stringPreferencesKey("hugging_face_token")
 
+// Apparence des bulles de chat (voir ui/chat/ChatScreen.kt) : forme et couleur
+// d'accent choisies independamment pour les messages utilisateur/assistant.
+// Stockees comme identifiants de preset ("rounded"/"square"/"pill" et
+// "cyan"/"gold"/"red"/"violet"/"green") plutot que des couleurs libres, pour
+// rester coherent avec la palette HUD existante (ui/theme/Color.kt) sans
+// avoir a batir un vrai color picker.
+val BUBBLE_SHAPE = stringPreferencesKey("bubble_shape")
+val BUBBLE_USER_COLOR = stringPreferencesKey("bubble_user_color")
+val BUBBLE_ASSISTANT_COLOR = stringPreferencesKey("bubble_assistant_color")
+
+// Presentation du planning/agenda (lu par le CommandRouter -- voir
+// ai/CommandRouter.kt) : regroupement par jour ou liste simple.
+val CALENDAR_GROUP_BY_DAY = stringPreferencesKey("calendar_group_by_day")
+
 // litert-community/Gemma3-1B-IT -- verifie via l'API HF : depot GATED (licence
 // Gemma a accepter une fois sur huggingface.co avant qu'un jeton d'acces
 // personnel puisse le telecharger). Fichier .task le plus adapte a
@@ -33,6 +47,10 @@ data class SettingsUiState(
     val huggingFaceToken: String = "",
     val isDownloadingGemma: Boolean = false,
     val gemmaDownloadError: String? = null,
+    val bubbleShape: String = "rounded",
+    val bubbleUserColor: String = "gold",
+    val bubbleAssistantColor: String = "cyan",
+    val calendarGroupByDay: Boolean = true,
 )
 
 class SettingsViewModel(
@@ -50,6 +68,10 @@ class SettingsViewModel(
                 engine = engineManager.ensureReady(),
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
                 huggingFaceToken = settings.get(HUGGING_FACE_TOKEN).orEmpty(),
+                bubbleShape = settings.get(BUBBLE_SHAPE) ?: "rounded",
+                bubbleUserColor = settings.get(BUBBLE_USER_COLOR) ?: "gold",
+                bubbleAssistantColor = settings.get(BUBBLE_ASSISTANT_COLOR) ?: "cyan",
+                calendarGroupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true",
             )
         }
     }
@@ -66,6 +88,26 @@ class SettingsViewModel(
     fun setHuggingFaceToken(token: String) = viewModelScope.launch {
         settings.set(HUGGING_FACE_TOKEN, token)
         _state.value = _state.value.copy(huggingFaceToken = token)
+    }
+
+    fun setBubbleShape(shape: String) = viewModelScope.launch {
+        settings.set(BUBBLE_SHAPE, shape)
+        _state.value = _state.value.copy(bubbleShape = shape)
+    }
+
+    fun setBubbleUserColor(color: String) = viewModelScope.launch {
+        settings.set(BUBBLE_USER_COLOR, color)
+        _state.value = _state.value.copy(bubbleUserColor = color)
+    }
+
+    fun setBubbleAssistantColor(color: String) = viewModelScope.launch {
+        settings.set(BUBBLE_ASSISTANT_COLOR, color)
+        _state.value = _state.value.copy(bubbleAssistantColor = color)
+    }
+
+    fun setCalendarGroupByDay(groupByDay: Boolean) = viewModelScope.launch {
+        settings.set(CALENDAR_GROUP_BY_DAY, groupByDay.toString())
+        _state.value = _state.value.copy(calendarGroupByDay = groupByDay)
     }
 
     /**

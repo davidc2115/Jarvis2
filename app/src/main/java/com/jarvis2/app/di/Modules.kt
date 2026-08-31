@@ -48,7 +48,7 @@ val aiModule = module {
     single { AiEngineManager(androidContext()) }
     single { MemoryStore(get()) }
     single { WebSearchTool(androidContext(), get()) }
-    single { CommandRouter(get(), get(), get(), get()) }
+    single { CommandRouter(get(), get(), get(), get(), get()) }
 }
 
 val integrationsModule = module {
@@ -74,7 +74,7 @@ val integrationsModule = module {
 }
 
 val viewModelModule = module {
-    viewModel { ChatViewModel(get(), get(), get(), get(), get()) }
+    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { VaultViewModel(get()) }
     viewModel { GraphViewModel(get()) }
     viewModel { IntegrationsViewModel(get()) }

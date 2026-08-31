@@ -1,6 +1,8 @@
 package com.jarvis2.app.ai
 
+import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.filegen.FileGenRouter
+import com.jarvis2.app.integrations.CalendarEvent
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.obsidian.VaultRepository
 
@@ -33,6 +35,7 @@ class CommandRouter(
     private val fileGen: FileGenRouter,
     private val vault: VaultRepository,
     private val memory: MemoryStore,
+    private val settings: SettingsDataStore,
 ) {
 
     suspend fun route(rawInput: String): CommandResult {
@@ -110,9 +113,13 @@ class CommandRouter(
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
             Matcher(Regex("(mes|mon).*(prochains? événements?|prochains? rendez-vous|planning|agenda)")) {
-                val events = integrations.calendar.upcomingEvents(limit = 5)
-                if (events.isEmpty()) CommandResult.Handled("Aucun événement à venir dans l'agenda.")
-                else CommandResult.Handled("Prochains événements : " + events.joinToString(" ; ") { it.title })
+                val events = integrations.calendar.upcomingEvents(limit = 10)
+                if (events.isEmpty()) {
+                    CommandResult.Handled("Aucun événement à venir dans l'agenda.")
+                } else {
+                    val groupByDay = (settings.get(com.jarvis2.app.ui.settings.CALENDAR_GROUP_BY_DAY) ?: "true") == "true"
+                    CommandResult.Handled(formatEvents(events, groupByDay))
+                }
             },
             Matcher(Regex("(crée|ajoute).*contact")) { t ->
                 val name = extractAfter(t, listOf("contact")) ?: "Nouveau contact"
@@ -232,6 +239,35 @@ class CommandRouter(
             if (m > 0) append("${m}min")
             if (s > 0 || (h == 0 && m == 0)) append("${s}s")
         }
+    }
+
+    /**
+     * Presentation du planning (voir ui/settings/SettingsScreen.kt : reglage
+     * "Regrouper par jour"). Groupe par defaut, sinon liste plate simple --
+     * les deux formats restent locaux, aucune dependance a un LLM.
+     */
+    private fun formatEvents(events: List<CalendarEvent>, groupByDay: Boolean): String {
+        if (!groupByDay) {
+            return "Prochains événements : " + events.joinToString(" ; ") { it.title }
+        }
+
+        val zone = java.time.ZoneId.systemDefault()
+        val timeFmt = java.time.format.DateTimeFormatter.ofPattern("HH'h'mm")
+        val dayFmt = java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM", java.util.Locale.FRENCH)
+
+        val grouped = events.groupBy { java.time.Instant.ofEpochMilli(it.startMillis).atZone(zone).toLocalDate() }
+
+        return buildString {
+            appendLine("Planning :")
+            grouped.forEach { (date, dayEvents) ->
+                val dayLabel = date.format(dayFmt).replaceFirstChar { it.uppercase() }
+                appendLine("📅 $dayLabel")
+                dayEvents.forEach { e ->
+                    val time = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone).toLocalTime().format(timeFmt)
+                    appendLine("  • $time — ${e.title}")
+                }
+            }
+        }.trim()
     }
 
     private fun extractAfter(text: String, keywords: List<String>): String? {

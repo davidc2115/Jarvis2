@@ -9,6 +9,7 @@ import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.Turn
 import com.jarvis2.app.ai.WebSearchTool
+import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.data.db.ChatDao
 import com.jarvis2.app.data.db.ChatMessageEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,12 @@ data class ChatUiState(
     val engine: EngineInfo? = null,
     val isThinking: Boolean = false,
     val pendingWebSearchQuery: String? = null, // set when the model admits it doesn't know
+    // Apparence des bulles (voir ui/settings/SettingsScreen.kt) -- chargee une
+    // fois au demarrage, comme `engine` ci-dessus ; un changement de reglage
+    // s'applique a la prochaine ouverture de l'ecran Chat.
+    val bubbleShape: String = "rounded",
+    val bubbleUserColor: String = "gold",
+    val bubbleAssistantColor: String = "cyan",
 )
 
 class ChatViewModel(
@@ -31,6 +38,7 @@ class ChatViewModel(
     private val memoryStore: MemoryStore,
     private val chatDao: ChatDao,
     private val webSearchTool: WebSearchTool,
+    private val settings: SettingsDataStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -42,7 +50,10 @@ class ChatViewModel(
             _state.value = _state.value.copy(engine = info)
             val recent = chatDao.recent(50).reversed()
             _state.value = _state.value.copy(
-                messages = recent.map { it.toUi() }
+                messages = recent.map { it.toUi() },
+                bubbleShape = settings.get(com.jarvis2.app.ui.settings.BUBBLE_SHAPE) ?: "rounded",
+                bubbleUserColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR) ?: "gold",
+                bubbleAssistantColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR) ?: "cyan",
             )
         }
     }

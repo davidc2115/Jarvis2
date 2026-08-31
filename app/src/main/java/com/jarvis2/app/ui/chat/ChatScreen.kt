@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.Turn
+import com.jarvis2.app.ui.theme.BubbleStyle
 import com.jarvis2.app.ui.theme.JarvisCyan
 import com.jarvis2.app.ui.theme.JarvisGold
 import com.jarvis2.app.ui.theme.JarvisSurfaceRaised
@@ -73,7 +73,9 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
+                items(state.messages, key = { it.id }) { message ->
+                    MessageBubble(message, shape = state.bubbleShape, userColorId = state.bubbleUserColor, assistantColorId = state.bubbleAssistantColor)
+                }
                 if (state.isThinking) {
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -124,13 +126,19 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatUiMessage) {
+private fun MessageBubble(
+    message: ChatUiMessage,
+    shape: String = "rounded",
+    userColorId: String = "gold",
+    assistantColorId: String = "cyan",
+) {
     val isUser = message.role == Turn.Role.USER
+    val accent = BubbleStyle.color(if (isUser) userColorId else assistantColorId)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
         Surface(
             color = if (isUser) JarvisSurfaceRaised else MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (isUser) JarvisGold.copy(alpha = 0.4f) else JarvisCyan.copy(alpha = 0.4f)),
+            shape = BubbleStyle.shape(shape),
+            border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
         ) {
             Text(
                 text = message.text,
