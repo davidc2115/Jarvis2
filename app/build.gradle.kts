@@ -7,7 +7,10 @@ plugins {
 
 android {
     namespace = "com.jarvis2.app"
-    compileSdk = 35
+    // compileSdk 36 requis par com.llamatik:library-android:1.10.1 (voir AAR metadata
+    // check en CI) -- targetSdk reste a 35 pour l'instant, cette bascule est independante
+    // (voir note officielle AGP : compileSdk peut monter sans toucher targetSdk/minSdk).
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.jarvis2.app"
