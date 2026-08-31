@@ -69,6 +69,15 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // com.sun.mail:android-mail et android-activation embarquent tous deux
+            // les memes fichiers META-INF (NOTICE/LICENSE), ce qui fait echouer
+            // mergeDebugJavaResource sans ces exclusions.
+            excludes += "/META-INF/NOTICE.md"
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
         }
     }
 }
