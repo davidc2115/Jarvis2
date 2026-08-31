@@ -100,6 +100,11 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.documentfile)
 
+    // Llamatik: AAR pre-construit (llama.cpp texte + libmtmd/CLIP vision) --
+    // voir ai/smolvlm/SmolVlmEngine.kt pour le moteur local par defaut
+    // (SmolVLM2, telecharge automatiquement, aucun compte requis).
+    implementation(libs.llamatik)
+
     // --- Local AI engines -------------------------------------------------
     // MediaPipe LLM Inference API: stable, well-documented, runs any bundled
     // .task model (e.g. Gemma) fully offline. Used as the universal fallback

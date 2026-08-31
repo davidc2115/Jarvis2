@@ -5,7 +5,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +35,7 @@ import java.io.File
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
+    var hfTokenField by remember(state.huggingFaceToken) { mutableStateOf(state.huggingFaceToken) }
     val context = LocalContext.current
 
     // Item 1 de la roadmap README : selecteur de fichier .task (SAF) pour importer le
@@ -49,7 +53,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Réglages", color = JarvisCyan) }) }) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp)) {
+        Column(modifier = Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
             Text("Moteur IA", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
             Text(state.engine?.displayName ?: "…")
             Text(state.engine?.notes.orEmpty(), style = MaterialTheme.typography.labelSmall)
@@ -58,6 +62,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 onClick = { pickModelFile.launch(arrayOf("*/*")) },
                 modifier = Modifier.padding(top = 8.dp),
             ) { Text("Importer un modèle .task (secours hors AICore)") }
+            Text(
+                "Par défaut, Jarvis télécharge et utilise automatiquement SmolVLM2 (léger, texte + image, aucune connexion/compte requis) — pas besoin de faire quoi que ce soit ici pour ça.",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Gemma 3 1B (optionnel)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Text(
+                "Alternative à SmolVLM2, verrouillée par Google derrière une licence Hugging Face. " +
+                    "Pour l'utiliser : crée un compte gratuit sur huggingface.co, ouvre la page " +
+                    "litert-community/Gemma3-1B-IT et accepte la licence, puis va dans Settings → " +
+                    "Access Tokens pour générer un jeton (lecture seule suffit) et colle-le ci-dessous.",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            OutlinedTextField(
+                value = hfTokenField,
+                onValueChange = { hfTokenField = it },
+                label = { Text("Jeton Hugging Face") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Button(onClick = { viewModel.setHuggingFaceToken(hfTokenField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer le jeton") }
+            Button(
+                onClick = { viewModel.downloadGemma() },
+                enabled = !state.isDownloadingGemma,
+                modifier = Modifier.padding(top = 8.dp),
+            ) { Text(if (state.isDownloadingGemma) "Téléchargement en cours…" else "Télécharger Gemma 3 1B (529 Mo)") }
+            if (state.isDownloadingGemma) {
+                CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp), color = JarvisCyan, strokeWidth = 2.dp)
+            }
+            state.gemmaDownloadError?.let { error ->
+                Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+            }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
