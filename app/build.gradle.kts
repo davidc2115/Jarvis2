@@ -31,6 +31,22 @@ android {
     // RELEASE_KEYSTORE_BASE64 secret to this path and exports the rest,
     // so a tagged release build comes out signed and installable.
     signingConfigs {
+        // Keystore de debug FIXE, committe dans le repo (app/debug.keystore).
+        // Ce n'est pas un secret : c'est exactement equivalent au
+        // ~/.android/debug.keystore qu'AGP genere automatiquement en local,
+        // sauf qu'ici il est identique a chaque build au lieu d'etre
+        // regenere aleatoirement a chaque run CI. Sans ca, chaque APK debug
+        // telecharge depuis Actions a une signature differente et Android
+        // refuse l'installation par-dessus l'ancienne (obligation de
+        // desinstaller avant chaque nouvelle version). Mot de passe standard
+        // "android" -- identique a celui du debug.keystore par defaut d'AGP.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+
         val releaseStoreFile = System.getenv("RELEASE_STORE_FILE")
         if (!releaseStoreFile.isNullOrBlank() && file(releaseStoreFile).exists()) {
             create("release") {
@@ -51,6 +67,7 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
