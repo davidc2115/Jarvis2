@@ -6,7 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
+import com.jarvis2.app.data.MailAccount
+import com.jarvis2.app.data.MailAccountStore
 import com.jarvis2.app.data.SettingsDataStore
+import com.jarvis2.app.integrations.MailReader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,11 +72,21 @@ data class SettingsUiState(
     val calendarGroupByDay: Boolean = true,
     val contactPresentationStyle: String = "compact",
     val webSearchPresentationStyle: String = "detailed",
+    val mailHost: String = "",
+    val mailPort: String = "993",
+    val mailUsername: String = "",
+    val mailAppPassword: String = "",
+    val mailUseSsl: Boolean = true,
+    val mailConfigured: Boolean = false,
+    val isTestingMail: Boolean = false,
+    val mailTestResult: String? = null,
 )
 
 class SettingsViewModel(
     private val engineManager: AiEngineManager,
     private val settings: SettingsDataStore,
+    private val mailAccountStore: MailAccountStore,
+    private val mailReader: MailReader,
     private val appContext: Context,
 ) : ViewModel() {
 
@@ -94,6 +107,16 @@ class SettingsViewModel(
                 contactPresentationStyle = settings.get(CONTACT_PRESENTATION_STYLE) ?: "compact",
                 webSearchPresentationStyle = settings.get(WEB_SEARCH_PRESENTATION_STYLE) ?: "detailed",
             )
+            mailAccountStore.get()?.let { account ->
+                _state.value = _state.value.copy(
+                    mailHost = account.host,
+                    mailPort = account.port.toString(),
+                    mailUsername = account.username,
+                    mailAppPassword = account.appPassword,
+                    mailUseSsl = account.useSsl,
+                    mailConfigured = true,
+                )
+            }
         }
     }
 
@@ -161,5 +184,40 @@ class SettingsViewModel(
     fun setWebSearchPresentationStyle(style: String) = viewModelScope.launch {
         settings.set(WEB_SEARCH_PRESENTATION_STYLE, style)
         _state.value = _state.value.copy(webSearchPresentationStyle = style)
+    }
+
+    /**
+     * Enregistre le compte mail IMAP (voir data/MailAccountStore.kt --
+     * stocke chiffre, separement de SettingsDataStore). [portText] est
+     * valide/converti ici plutot que dans l'UI pour garder SettingsScreen.kt
+     * simple ; un port invalide est silencieusement remplace par le defaut
+     * IMAPS (993) plutot que de planter.
+     */
+    fun saveMailAccount(host: String, portText: String, username: String, appPassword: String, useSsl: Boolean) {
+        val port = portText.trim().toIntOrNull() ?: if (useSsl) 993 else 143
+        val account = MailAccount(host.trim(), port, username.trim(), appPassword, useSsl)
+        mailAccountStore.save(account)
+        _state.value = _state.value.copy(
+            mailHost = account.host,
+            mailPort = account.port.toString(),
+            mailUsername = account.username,
+            mailAppPassword = account.appPassword,
+            mailUseSsl = account.useSsl,
+            mailConfigured = true,
+            mailTestResult = null,
+        )
+    }
+
+    /** Verifie la connexion IMAP immediatement, pour un retour rapide apres avoir colle un mot de passe. */
+    fun testMailConnection() = viewModelScope.launch {
+        _state.value = _state.value.copy(isTestingMail = true, mailTestResult = null)
+        val result = mailReader.fetchRecent(limit = 1)
+        _state.value = _state.value.copy(
+            isTestingMail = false,
+            mailTestResult = result.fold(
+                onSuccess = { "Connexion réussie." },
+                onFailure = { e -> "Échec : ${e.message}" },
+            ),
+        )
     }
 }

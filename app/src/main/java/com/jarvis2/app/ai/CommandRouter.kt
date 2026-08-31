@@ -5,6 +5,7 @@ import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.CalendarEvent
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
+import com.jarvis2.app.integrations.MailSummary
 import com.jarvis2.app.obsidian.VaultRepository
 import com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR
 import com.jarvis2.app.ui.settings.BUBBLE_SHAPE
@@ -221,6 +222,21 @@ class CommandRouter(
                 if (file == null) CommandResult.Handled("Position GPS indisponible, impossible de générer le KML.")
                 else CommandResult.Handled("Fichier KML généré: ${file.name}.")
             },
+            Matcher(Regex("""(lis|montre|affiche).*mails?|(derniers?|nouveaux?) mails?|mails? non lus?""")) { t ->
+                if (!integrations.mailReader.isConfigured()) {
+                    CommandResult.Handled(
+                        "Aucun compte mail configuré. Va dans Réglages → Mail pour renseigner " +
+                            "hôte IMAP, port, utilisateur et mot de passe d'application.",
+                    )
+                } else {
+                    val unreadOnly = Regex("non lus?").containsMatchIn(t)
+                    val result = integrations.mailReader.fetchRecent(limit = 10, unreadOnly = unreadOnly)
+                    result.fold(
+                        onSuccess = { mails -> CommandResult.Handled(formatMails(mails)) },
+                        onFailure = { e -> CommandResult.Handled("Impossible de lire les mails : ${e.message}") },
+                    )
+                }
+            },
             Matcher(Regex("(envoie|rédige|compose).*mail")) { t ->
                 val subject = extractAfter(t, listOf("mail", "email", "courriel")) ?: "Message depuis Jarvis"
                 integrations.mail.composeMail(subject = subject, body = "")
@@ -369,6 +385,24 @@ class CommandRouter(
             contacts.forEach { c ->
                 val phone = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
                 appendLine("👤 ${c.name} — $phone")
+            }
+        }.trim()
+    }
+
+    /**
+     * Formate un lot de mails pour affichage chat -- voir integrations/MailReader.kt.
+     * Marqueur visuel simple (🔵) pour les non-lus, pas de reglage de style
+     * dedie contrairement aux contacts/planning : un mail n'a qu'une seule
+     * presentation utile ici (expediteur + objet + court extrait).
+     */
+    private fun formatMails(mails: List<MailSummary>): String {
+        if (mails.isEmpty()) return "Aucun mail à afficher."
+        return buildString {
+            appendLine("Mails (${mails.size}) :")
+            mails.forEach { m ->
+                val marker = if (m.isUnread) "🔵" else "•"
+                appendLine("$marker ${m.from} — ${m.subject}")
+                if (m.snippet.isNotBlank()) appendLine("   ${m.snippet}")
             }
         }.trim()
     }

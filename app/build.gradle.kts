@@ -108,6 +108,14 @@ dependencies {
     // (SmolVLM2, telecharge automatiquement, aucun compte requis).
     implementation(libs.llamatik)
 
+    // JavaMail port Android (namespace javax.mail, package export verifie
+    // via le pom Maven du module) -- lecture IMAP dans integrations/MailReader.kt.
+    // Pas de dependance a Gmail API/OAuth (necessiterait un projet Google
+    // Cloud) : fonctionne avec n'importe quel fournisseur IMAP, dont Gmail
+    // lui-meme via un mot de passe d'application.
+    implementation(libs.android.mail)
+    implementation(libs.android.mail.activation)
+
     // --- Local AI engines -------------------------------------------------
     // AICore (Gemini Nano) client SDK. This artifact is still labelled
     // experimental by Google and its group/artifact id or API surface may

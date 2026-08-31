@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.gguf.LocalGgufModel
 import com.jarvis2.app.ui.theme.BubbleStyle
@@ -38,6 +39,11 @@ import org.koin.androidx.compose.koinViewModel
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
+    var mailHostField by remember(state.mailHost) { mutableStateOf(state.mailHost) }
+    var mailPortField by remember(state.mailPort) { mutableStateOf(state.mailPort) }
+    var mailUsernameField by remember(state.mailUsername) { mutableStateOf(state.mailUsername) }
+    var mailPasswordField by remember(state.mailAppPassword) { mutableStateOf(state.mailAppPassword) }
+    var mailUseSslField by remember(state.mailUseSsl) { mutableStateOf(state.mailUseSsl) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Réglages", color = JarvisCyan) }) }) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -99,6 +105,62 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             Button(onClick = { viewModel.setWebSearchApiKey(apiKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Mail (IMAP)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Text(
+                "Lecture seule. Fonctionne avec n'importe quel fournisseur IMAP, dont Gmail lui-même " +
+                    "via un « mot de passe d'application » généré dans myaccount.google.com → Sécurité → " +
+                    "Validation en deux étapes → Mots de passe des applications (jamais ton mot de passe " +
+                    "principal). Une fois configuré, demande à Jarvis dans le chat : "lis mes mails".",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            OutlinedTextField(
+                value = mailHostField,
+                onValueChange = { mailHostField = it },
+                label = { Text("Hôte IMAP (ex. imap.gmail.com)") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
+                value = mailPortField,
+                onValueChange = { mailPortField = it },
+                label = { Text("Port (993 = IMAPS par défaut)") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
+                value = mailUsernameField,
+                onValueChange = { mailUsernameField = it },
+                label = { Text("Adresse mail") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
+                value = mailPasswordField,
+                onValueChange = { mailPasswordField = it },
+                label = { Text("Mot de passe d'application") },
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = mailUseSslField, onCheckedChange = { mailUseSslField = it })
+                Text("Connexion chiffrée (SSL/TLS)", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                Button(onClick = {
+                    viewModel.saveMailAccount(mailHostField, mailPortField, mailUsernameField, mailPasswordField, mailUseSslField)
+                }) { Text("Enregistrer") }
+                Button(onClick = { viewModel.testMailConnection() }, enabled = state.mailConfigured && !state.isTestingMail) {
+                    Text(if (state.isTestingMail) "Test en cours…" else "Tester la connexion")
+                }
+            }
+            state.mailTestResult?.let { result ->
+                Text(
+                    result,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (result.startsWith("Échec")) MaterialTheme.colorScheme.error else JarvisCyan,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

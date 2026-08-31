@@ -11,4 +11,5 @@ class IntegrationsRouter(
     val mail: MailComposer,
     val storage: StorageAccess,
     val alarm: AlarmController,
+    val mailReader: MailReader,
 )
