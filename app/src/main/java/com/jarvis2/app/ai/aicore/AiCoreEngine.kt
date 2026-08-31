@@ -39,11 +39,25 @@ class AiCoreEngine(private val context: Context) : LocalAiEngine {
 
     override suspend fun prepare(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            session = AiCoreSessionFactory.tryCreate(context)
+            val s = AiCoreSessionFactory.tryCreate(context)
                 ?: throw IllegalStateException("AICore indisponible sur cet appareil (device non supporté ou module non installé).")
+            // La simple construction de GenerativeModel reussit meme sur des
+            // appareils qui n'ont pas reellement le module d'inference Gemini
+            // Nano installe -- le SDK experimental ne verifie la disponibilite
+            // qu'au tout premier appel reel. Sans ce test, AiEngineManager
+            // selectionnait AICore comme moteur actif alors qu'il echouait a
+            // chaque message avec "AICore failed with error type 2
+            // INFERENCE_ERROR ... required LLM feature not found" au lieu de
+            // basculer sur MediaPipe. Un test d'inference minimal ici, une
+            // seule fois au demarrage, garantit que ready=true veut vraiment
+            // dire "peut generer".
+            s.generate("", emptyList(), "Bonjour")
+            session = s
             ready = true
         }.onFailure {
             lastError = it.message
+            session?.close()
+            session = null
             ready = false
         }
     }

@@ -49,8 +49,28 @@ class AiEngineManager(private val context: Context) {
 
     suspend fun generate(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Result<String> {
         val engine = current ?: run { ensureReady(); current }
-        return engine?.generate(prompt, history, systemPrompt)
-            ?: Result.failure(IllegalStateException("Aucun moteur IA disponible"))
+            ?: return Result.failure(IllegalStateException("Aucun moteur IA disponible"))
+
+        val result = engine.generate(prompt, history, systemPrompt)
+        if (result.isSuccess || engine !== aiCore) {
+            return result
+        }
+
+        // Filet de securite : AICore avait passe le test d'inference au
+        // demarrage (voir AiCoreEngine.prepare) mais echoue quand meme ici
+        // (ex: le service systeme AICore devient indisponible apres coup,
+        // une mise a jour OTA, etc). On bascule silencieusement et
+        // durablement sur MediaPipe pour ne plus jamais retenter AICore sur
+        // cet appareil, et on rejoue cette meme requete au lieu d'exposer
+        // l'erreur brute du SDK a l'utilisateur.
+        aiCore.release()
+        val mediaPipeResult = mediaPipe.prepare()
+        current = mediaPipe
+        _activeEngine.value = mediaPipe.info()
+        if (mediaPipeResult.isFailure) {
+            return result
+        }
+        return mediaPipe.generate(prompt, history, systemPrompt)
     }
 
     fun generateStreaming(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Flow<String> {
