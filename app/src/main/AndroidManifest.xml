@@ -14,6 +14,21 @@
     -->
     <uses-sdk tools:overrideLibrary="com.google.ai.edge.aicore" />
 
+    <!-- Package visibility (Android 11+ / targetSdk 30+) : sans ce bloc <queries>,
+         Intent.resolveActivity() pour ACTION_SET_ALARM / ACTION_SET_TIMER renvoie
+         systematiquement null meme si une appli Horloge est installee, car le
+         systeme masque par defaut les apps tierces a partir de l'API 30 (voir
+         AlarmController.kt). Sans ceci, l'utilisateur voit "aucune application
+         Horloge trouvee" alors que l'appli Horloge existe bel et bien. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+    </queries>
+
     <!-- Core -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
