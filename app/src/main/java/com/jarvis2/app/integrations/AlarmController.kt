@@ -10,9 +10,12 @@ import android.util.Log
  * l'application Horloge par defaut du telephone (pas d'AlarmManager natif :
  * ca demanderait de reimplementer toute une UI de reveil/minuteur, alors que
  * chaque telephone a deja une appli Horloge qui fait deja ca tres bien).
- * EXTRA_SKIP_UI=false volontairement : on laisse l'appli Horloge confirmer
- * visuellement, plutot que de creer silencieusement un reveil sans que
- * l'utilisateur le voie.
+ * EXTRA_SKIP_UI=true sur demande explicite de l'utilisateur : le reveil/
+ * minuteur est cree directement en arriere-plan par l'appli Horloge, sans
+ * ouvrir son ecran de confirmation (verifie via la doc AlarmClock -- ignore
+ * uniquement si aucune duree n'est precisee pour ACTION_SET_TIMER, ce qui
+ * n'arrive jamais ici puisque extractDurationSeconds() est deja verifie non
+ * nul avant l'appel, voir CommandRouter.kt).
  *
  * Necessite la permission com.android.alarm.permission.SET_ALARM (voir
  * AndroidManifest.xml) -- sans elle, ACTION_SET_ALARM/ACTION_SET_TIMER
@@ -25,7 +28,7 @@ class AlarmController(private val context: Context) {
             putExtra(AlarmClock.EXTRA_HOUR, hour)
             putExtra(AlarmClock.EXTRA_MINUTES, minute)
             if (!label.isNullOrBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         return launch(intent, "setAlarm")
@@ -36,7 +39,7 @@ class AlarmController(private val context: Context) {
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, totalSeconds)
             if (!label.isNullOrBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         return launch(intent, "setTimer")
