@@ -57,8 +57,18 @@ import kotlinx.coroutines.sync.withLock
 class AiEngineManager(private val context: Context, private val settings: SettingsDataStore) {
 
     private val aiCore = AiCoreEngine(context)
-    private val selectable by lazy { SelectableLlmEngine(context, settings) }
-    private val smolVlm by lazy { SmolVlmEngine(context) }
+
+    // onStatusChanged relaie chaque mise a jour de progression de
+    // telechargement (voir SelectableLlmEngine/SmolVlmEngine) directement
+    // dans _activeEngine, pour que l'UI (Settings/Chat, qui observent tous
+    // les deux ce StateFlow) affiche une progression reelle en Mo/pourcentage
+    // au lieu d'un simple spinner sans texte pendant tout le telechargement.
+    private val selectable by lazy {
+        SelectableLlmEngine(context, settings, onStatusChanged = { _activeEngine.value = it })
+    }
+    private val smolVlm by lazy {
+        SmolVlmEngine(context, onStatusChanged = { _activeEngine.value = it })
+    }
 
     /** Ordered from most to least preferred; see class doc. */
     private val engineChain: List<LocalAiEngine> by lazy { listOf(aiCore, selectable, smolVlm) }

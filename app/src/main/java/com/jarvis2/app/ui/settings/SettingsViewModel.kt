@@ -99,6 +99,18 @@ class SettingsViewModel(
             )
             _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
         }
+        // Observe la progression en direct des telechargements de modele
+        // (voir AiEngineManager.activeEngine) au lieu de ne lire l'etat du
+        // moteur qu'une fois avant/apres tout setPreferredEngine() -- sans
+        // ca, "Actif : ..." restait fige sur l'ancien moteur pendant tout un
+        // telechargement de plusieurs centaines de Mo/quelques Go (Qwen/
+        // Phi/Dolphin), avec pour seul signe de vie un spinner sans texte,
+        // ce qui donnait l'impression qu'aucun telechargement n'avait lieu.
+        viewModelScope.launch {
+            engineManager.activeEngine.collect { info ->
+                if (info != null) _state.value = _state.value.copy(engine = info)
+            }
+        }
     }
 
     fun refreshEngine() = viewModelScope.launch {

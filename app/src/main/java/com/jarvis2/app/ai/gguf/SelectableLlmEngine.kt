@@ -38,6 +38,16 @@ import java.io.File
 class SelectableLlmEngine(
     private val context: Context,
     private val settings: SettingsDataStore,
+    /**
+     * Rappelee a chaque changement d'etat significatif (debut/avancement/fin
+     * de telechargement) -- permet a AiEngineManager de relayer une
+     * progression en direct (voir son StateFlow activeEngine) au lieu de ne
+     * publier qu'un instantane avant/apres tout le prepare(). Sans ca, un
+     * telechargement de plusieurs centaines de Mo (Phi-3.5 mini fait 2.4 Go)
+     * pouvait sembler bloque/inexistant a l'ecran Reglages : seul un
+     * spinner generique s'affichait, sans aucun texte de progression.
+     */
+    private val onStatusChanged: (EngineInfo) -> Unit = {},
 ) : LocalAiEngine {
 
     private var ready = false
@@ -62,13 +72,27 @@ class SelectableLlmEngine(
             if (ready && loadedModel == model) return@runCatching
 
             val modelFile = File(modelsDir, model.filename)
-            downloadStatus = "Téléchargement de ${model.displayName} (${model.sizeBytes / 1_000_000} Mo, une seule fois)…"
+            loadedModel = null
+            downloadStatus = "Téléchargement de ${model.displayName} : 0 / ${model.sizeBytes / 1_000_000} Mo (0 %)…"
+            onStatusChanged(info())
+            var lastReportedPercent = -1
             ModelDownloader.downloadIfMissing(
                 url = model.downloadUrl,
                 destFile = modelFile,
                 expectedSizeBytes = model.sizeBytes,
+                onProgress = { done, total ->
+                    val totalKnown = total.takeIf { it > 0 } ?: model.sizeBytes
+                    val percent = if (totalKnown > 0) ((done * 100) / totalKnown).toInt() else -1
+                    if (percent != lastReportedPercent) {
+                        lastReportedPercent = percent
+                        downloadStatus = "Téléchargement de ${model.displayName} : ${done / 1_000_000} / ${totalKnown / 1_000_000} Mo" +
+                            (if (percent >= 0) " ($percent %)" else "") + "…"
+                        onStatusChanged(info())
+                    }
+                },
             ).getOrThrow()
-            downloadStatus = null
+            downloadStatus = "Chargement de ${model.displayName} en mémoire…"
+            onStatusChanged(info())
 
             // Meme reglage anti-repetition que SmolVlmEngine (voir sa doc) --
             // pertinent pour n'importe quel petit modele quantifie, pas
@@ -93,10 +117,13 @@ class SelectableLlmEngine(
             }
             ready = true
             loadedModel = model
+            downloadStatus = null
+            onStatusChanged(info())
         }.onFailure {
             if (it !is NoOptionalModelSelected) {
                 lastError = it.message
                 downloadStatus = null
+                onStatusChanged(info())
             }
             ready = false
         }

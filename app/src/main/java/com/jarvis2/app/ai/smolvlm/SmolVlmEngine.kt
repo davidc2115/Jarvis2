@@ -38,7 +38,11 @@ import java.io.File
  * stockage prive de l'app, jamais dans le depot Git/l'APK (voir
  * ModelDownloader pour le pourquoi).
  */
-class SmolVlmEngine(private val context: Context) : LocalAiEngine {
+class SmolVlmEngine(
+    private val context: Context,
+    /** Voir la doc du meme parametre sur SelectableLlmEngine -- meme raison d'etre. */
+    private val onStatusChanged: (EngineInfo) -> Unit = {},
+) : LocalAiEngine {
 
     private var ready = false
     private var lastError: String? = null
@@ -53,20 +57,15 @@ class SmolVlmEngine(private val context: Context) : LocalAiEngine {
 
     override suspend fun prepare(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            downloadStatus = "Téléchargement du modèle IA local SmolVLM2 (~420 Mo, une seule fois, connexion requise)…"
-            ModelDownloader.downloadIfMissing(
-                url = MODEL_URL,
-                destFile = modelFile,
-                expectedSizeBytes = MODEL_SIZE_BYTES,
-            ).getOrThrow()
+            downloadStatus = "Téléchargement du modèle IA local SmolVLM2 : 0 / ${MODEL_SIZE_BYTES / 1_000_000} Mo (0 %)…"
+            onStatusChanged(info())
+            downloadWithProgress("modèle IA local SmolVLM2", MODEL_URL, modelFile, MODEL_SIZE_BYTES)
 
-            downloadStatus = "Téléchargement du module vision SmolVLM2 (~104 Mo)…"
-            ModelDownloader.downloadIfMissing(
-                url = MMPROJ_URL,
-                destFile = mmprojFile,
-                expectedSizeBytes = MMPROJ_SIZE_BYTES,
-            ).getOrThrow()
-            downloadStatus = null
+            downloadStatus = "Téléchargement du module vision SmolVLM2 : 0 / ${MMPROJ_SIZE_BYTES / 1_000_000} Mo (0 %)…"
+            onStatusChanged(info())
+            downloadWithProgress("module vision SmolVLM2", MMPROJ_URL, mmprojFile, MMPROJ_SIZE_BYTES)
+            downloadStatus = "Chargement de SmolVLM2 en mémoire…"
+            onStatusChanged(info())
 
             // Reglages releves par rapport aux defauts de Llamatik (temperature 0.7,
             // repeatPenalty 1.1) : un modele aussi petit que SmolVLM2-500M part plus
@@ -99,11 +98,39 @@ class SmolVlmEngine(private val context: Context) : LocalAiEngine {
                 throw IllegalStateException("LlamaBridge.initGenerateModel a échoué pour ${modelFile.absolutePath}")
             }
             ready = true
+            downloadStatus = null
+            onStatusChanged(info())
         }.onFailure {
             lastError = it.message
             downloadStatus = null
             ready = false
+            onStatusChanged(info())
         }
+    }
+
+    /**
+     * Enveloppe ModelDownloader.downloadIfMissing avec un callback de
+     * progression qui met a jour [downloadStatus] et notifie
+     * [onStatusChanged] a chaque pourcentage entier franchi (pas a chaque
+     * chunk de 64 Ko, pour ne pas noyer l'UI de mises a jour inutiles).
+     */
+    private suspend fun downloadWithProgress(label: String, url: String, destFile: File, expectedSizeBytes: Long) {
+        var lastReportedPercent = -1
+        ModelDownloader.downloadIfMissing(
+            url = url,
+            destFile = destFile,
+            expectedSizeBytes = expectedSizeBytes,
+            onProgress = { done, total ->
+                val totalKnown = total.takeIf { it > 0 } ?: expectedSizeBytes
+                val percent = if (totalKnown > 0) ((done * 100) / totalKnown).toInt() else -1
+                if (percent != lastReportedPercent) {
+                    lastReportedPercent = percent
+                    downloadStatus = "Téléchargement du $label : ${done / 1_000_000} / ${totalKnown / 1_000_000} Mo" +
+                        (if (percent >= 0) " ($percent %)" else "") + "…"
+                    onStatusChanged(info())
+                }
+            },
+        ).getOrThrow()
     }
 
     override fun info() = EngineInfo(

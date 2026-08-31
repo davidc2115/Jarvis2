@@ -56,6 +56,17 @@ class ChatViewModel(
                 bubbleAssistantColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR) ?: "cyan",
             )
         }
+        // Meme raison que dans SettingsViewModel : observe la progression en
+        // direct (voir AiEngineManager.activeEngine) pour que l'indicateur
+        // en haut du chat ("SmolVLM2 · prêt", etc.) reflete un telechargement
+        // en cours (ex: si l'utilisateur choisit Qwen/Phi/Dolphin dans
+        // Reglages puis revient sur le chat) au lieu de rester fige sur le
+        // dernier moteur pret constate au tout premier lancement de l'ecran.
+        viewModelScope.launch {
+            engineManager.activeEngine.collect { info ->
+                if (info != null) _state.value = _state.value.copy(engine = info)
+            }
+        }
     }
 
     fun sendMessage(text: String) {
