@@ -113,7 +113,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 "Lecture seule. Fonctionne avec n'importe quel fournisseur IMAP, dont Gmail lui-même " +
                     "via un « mot de passe d'application » généré dans myaccount.google.com → Sécurité → " +
                     "Validation en deux étapes → Mots de passe des applications (jamais ton mot de passe " +
-                    "principal). Une fois configuré, demande à Jarvis dans le chat : "lis mes mails".",
+                    "principal). Une fois configuré, demande à Jarvis dans le chat : « lis mes mails ».",
                 style = MaterialTheme.typography.labelSmall,
             )
             OutlinedTextField(
