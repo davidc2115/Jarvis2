@@ -109,17 +109,14 @@ dependencies {
     implementation(libs.llamatik)
 
     // --- Local AI engines -------------------------------------------------
-    // MediaPipe LLM Inference API: stable, well-documented, runs any bundled
-    // .task model (e.g. Gemma) fully offline. Used as the universal fallback
-    // on every device, and as the only engine on phones without AICore.
-    implementation(libs.mediapipe.genai)
-
     // AICore (Gemini Nano) client SDK. This artifact is still labelled
     // experimental by Google and its group/artifact id or API surface may
-    // have moved by the time you build this — if `com.google.ai.edge.aicore`
+    // have moved by the time you build this -- if `com.google.ai.edge.aicore`
     // fails to resolve, check https://developer.android.com/ai/gemini-nano
     // for the current coordinates and adjust AiCoreEngine.kt accordingly.
-    // The app is fully functional without it (falls back to MediaPipe).
+    // The app is fully functional without it (falls back to SmolVLM2/GGUF,
+    // see ai/AiEngineManager.kt -- the old MediaPipe .task fallback was
+    // retired along with Gemma, its only real-world user).
     implementation(libs.aicore)
 
     testImplementation("junit:junit:4.13.2")

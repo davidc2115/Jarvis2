@@ -45,7 +45,7 @@ val dataModule = module {
 }
 
 val aiModule = module {
-    single { AiEngineManager(androidContext()) }
+    single { AiEngineManager(androidContext(), get()) }
     single { MemoryStore(get()) }
     single { WebSearchTool(androidContext(), get()) }
     single { CommandRouter(get(), get(), get(), get(), get()) }

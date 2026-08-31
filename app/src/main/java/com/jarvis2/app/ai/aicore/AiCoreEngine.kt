@@ -15,8 +15,8 @@ import kotlinx.coroutines.withContext
  * Xiaomi 14T Pro/15/15T/15T Pro/15 Ultra/17/17 Ultra, POCO F7 Ultra/F8
  * Pro/F8 Ultra/X7 Pro/X8 Pro, per Google's published Gemini Nano v2
  * compatibility list). Where available it's faster and lighter than the
- * bundled MediaPipe fallback because the model is shared at the OS level
- * instead of packaged per-app.
+ * bundled llama.cpp-based fallbacks because the model is shared at the OS
+ * level instead of packaged per-app.
  *
  * IMPORTANT — read before shipping: the on-device generative client SDK
  * (group `com.google.ai.edge.aicore`) is still labelled experimental/early
@@ -28,8 +28,10 @@ import kotlinx.coroutines.withContext
  * everything else in the app is unaffected because it only talks to this
  * class through [LocalAiEngine]. [AiEngineManager] treats a failure to
  * initialize this engine as "unavailable" and transparently falls back to
- * [com.jarvis2.app.ai.mediapipe.MediaPipeLlmEngine], so the app is fully
- * usable even if this class needs adjustment for a newer SDK build.
+ * [com.jarvis2.app.ai.gguf.SelectableLlmEngine] (if the user picked an
+ * optional model) then [com.jarvis2.app.ai.smolvlm.SmolVlmEngine], so the
+ * app is fully usable even if this class needs adjustment for a newer SDK
+ * build.
  */
 class AiCoreEngine(private val context: Context) : LocalAiEngine {
 
@@ -48,9 +50,9 @@ class AiCoreEngine(private val context: Context) : LocalAiEngine {
             // selectionnait AICore comme moteur actif alors qu'il echouait a
             // chaque message avec "AICore failed with error type 2
             // INFERENCE_ERROR ... required LLM feature not found" au lieu de
-            // basculer sur MediaPipe. Un test d'inference minimal ici, une
-            // seule fois au demarrage, garantit que ready=true veut vraiment
-            // dire "peut generer".
+            // basculer sur le moteur suivant de la chaine. Un test
+            // d'inference minimal ici, une seule fois au demarrage, garantit
+            // que ready=true veut vraiment dire "peut generer".
             s.generate("", emptyList(), "Bonjour")
             session = s
             ready = true

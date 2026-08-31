@@ -2,8 +2,9 @@ package com.jarvis2.app.ai
 
 import android.content.Context
 import com.jarvis2.app.ai.aicore.AiCoreEngine
-import com.jarvis2.app.ai.mediapipe.MediaPipeLlmEngine
+import com.jarvis2.app.ai.gguf.SelectableLlmEngine
 import com.jarvis2.app.ai.smolvlm.SmolVlmEngine
+import com.jarvis2.app.data.SettingsDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +19,19 @@ import kotlinx.coroutines.flow.asStateFlow
  *  1. [AiCoreEngine] (Gemini Nano / AICore) — native, fastest, no per-app
  *     model download, but only present on a handful of recent flagship
  *     devices. Tried first because it's essentially free to probe.
- *  2. [SmolVlmEngine] (SmolVLM2, llama.cpp) — the real default in practice:
+ *  2. [SelectableLlmEngine] (Qwen 2.5 1.5B / Phi-3.5 mini / Dolphin 3.0,
+ *     llama.cpp) — optional, chosen explicitly by the user in Settings
+ *     (see ai/gguf/LocalGgufModel.kt). Placed BEFORE SmolVLM2 in the chain
+ *     on purpose: if the user went out of their way to pick one of these,
+ *     they expect Jarvis to actually talk to it, not silently keep using
+ *     the default. When nothing is selected, `prepare()` fails instantly
+ *     with no network call, so this step costs nothing in the common case.
+ *     Replaces the old Gemma 3 1B slot (gated, needed a Hugging Face
+ *     token) — none of these three need an account or any API key.
+ *  3. [SmolVlmEngine] (SmolVLM2, llama.cpp) — the guaranteed default:
  *     works on any ARM64 phone, downloads itself automatically on first use
  *     from an ungated Hugging Face repo (no account, no license click), and
  *     is natively multimodal (text + image).
- *  3. [MediaPipeLlmEngine] (Gemma 3 1B or any other imported `.task` model)
- *     — optional/manual: either imported by the user via Settings, or
- *     downloaded from Hugging Face using a personal access token the user
- *     pastes in Settings (Gemma is gated upstream, unlike SmolVLM2).
  *
  * [ensureReady] walks the chain once and settles on the first engine whose
  * [LocalAiEngine.prepare] succeeds. [generate] additionally self-heals at
@@ -35,14 +41,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * the next engine in the chain and retries the same request, instead of
  * surfacing the raw SDK error to the user.
  */
-class AiEngineManager(private val context: Context) {
+class AiEngineManager(private val context: Context, private val settings: SettingsDataStore) {
 
     private val aiCore = AiCoreEngine(context)
+    private val selectable by lazy { SelectableLlmEngine(context, settings) }
     private val smolVlm by lazy { SmolVlmEngine(context) }
-    private val mediaPipe by lazy { MediaPipeLlmEngine(context) }
 
     /** Ordered from most to least preferred; see class doc. */
-    private val engineChain: List<LocalAiEngine> by lazy { listOf(aiCore, smolVlm, mediaPipe) }
+    private val engineChain: List<LocalAiEngine> by lazy { listOf(aiCore, selectable, smolVlm) }
 
     private val _activeEngine = MutableStateFlow<EngineInfo?>(null)
     val activeEngine: StateFlow<EngineInfo?> = _activeEngine.asStateFlow()
@@ -67,8 +73,9 @@ class AiEngineManager(private val context: Context) {
         }
 
         // Aucun moteur n'a reussi son prepare(): on retombe sur le dernier de
-        // la chaine (MediaPipe) pour que l'UI affiche un message utile
-        // ("aucun modele importe...") plutot que de planter.
+        // la chaine (SmolVLM2, qui reussit quasiment toujours puisqu'il se
+        // telecharge lui-meme) pour que l'UI affiche un message utile plutot
+        // que de planter.
         val last = engineChain.last()
         current = last
         _activeEngine.value = last.info()
@@ -115,8 +122,8 @@ class AiEngineManager(private val context: Context) {
 
     fun release() {
         aiCore.release()
+        selectable.release()
         smolVlm.release()
-        mediaPipe.release()
         current = null
     }
 }

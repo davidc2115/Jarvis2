@@ -12,7 +12,6 @@ koin = "4.0.0"
 datastore = "1.1.1"
 coroutines = "1.9.0"
 workmanager = "2.10.0"
-mediapipeGenai = "0.10.24"
 # AICore (Gemini Nano) experimental SDK — see app/build.gradle.kts comment before bumping.
 aicore = "0.0.1-exp01"
 securityCrypto = "1.1.0-alpha06"
@@ -45,7 +44,6 @@ koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compos
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workmanager" }
-mediapipe-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeGenai" }
 aicore = { group = "com.google.ai.edge.aicore", name = "aicore", version.ref = "aicore" }
 security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 accompanist-permissions = { group = "com.google.accompanist", name = "accompanist-permissions", version.ref = "accompanistPermissions" }
