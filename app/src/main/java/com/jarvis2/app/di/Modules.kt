@@ -50,7 +50,7 @@ val aiModule = module {
     single { AiEngineManager(androidContext(), get()) }
     single { MemoryStore(get()) }
     single { WebSearchTool(androidContext(), get()) }
-    single { CommandRouter(get(), get(), get(), get(), get()) }
+    single { CommandRouter(get(), get(), get(), get(), get(), get()) }
 }
 
 val integrationsModule = module {

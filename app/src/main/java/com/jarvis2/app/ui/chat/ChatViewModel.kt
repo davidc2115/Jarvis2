@@ -123,23 +123,19 @@ class ChatViewModel(
      * L'unique exception explicite et opt-in a "100% local" (voir WebSearchTool) :
      * declenchee seulement ici, sur confirmation explicite de l'utilisateur dans le
      * chat (bouton "Rechercher" apres que le modele ait admis ne pas savoir) --
-     * jamais automatiquement. Le resultat est reinjecte comme un message normal de
+     * jamais automatiquement. Va chercher le texte reel des pages (pas juste les
+     * extraits du moteur de recherche -- voir WebSearchTool.searchAndExtract) et
+     * fait synthetiser une reponse directe par CommandRouter.renderWebSearchResults
+     * (qui respecte l'instruction de presentation "recherche web" si l'utilisateur
+     * en a enregistre une). Le resultat est reinjecte comme un message normal de
      * Jarvis, et memorise comme n'importe quel autre echange.
      */
     fun searchWeb(query: String) {
         _state.value = _state.value.copy(pendingWebSearchQuery = null, isThinking = true)
         viewModelScope.launch {
-            val result = webSearchTool.search(query)
-            result.onSuccess { results ->
-                val detailed = (settings.get(com.jarvis2.app.ui.settings.WEB_SEARCH_PRESENTATION_STYLE) ?: "detailed") == "detailed"
-                val formatted = when {
-                    results.isEmpty() -> "Aucun resultat web trouve pour « $query »."
-                    detailed -> buildString {
-                        appendLine("Resultats web pour « $query » :")
-                        results.forEach { r -> appendLine("• ${r.title} — ${r.snippet} (${r.url})") }
-                    }.trim()
-                    else -> "Résultats web pour « $query » : " + results.joinToString(" ; ") { it.title }
-                }
+            val result = webSearchTool.searchAndExtract(query)
+            result.onSuccess { extracts ->
+                val formatted = commandRouter.renderWebSearchResults(query, extracts)
                 appendMessage(Turn.Role.ASSISTANT, formatted)
                 memoryStore.remember("$query -> $formatted", source = "web_search")
             }.onFailure { error ->

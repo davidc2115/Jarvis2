@@ -51,14 +51,11 @@ val BUBBLE_ASSISTANT_COLOR = stringPreferencesKey("bubble_assistant_color")
 // ai/CommandRouter.kt) : regroupement par jour ou liste simple.
 val CALENDAR_GROUP_BY_DAY = stringPreferencesKey("calendar_group_by_day")
 
-// Presentation des contacts (lu par CommandRouter.formatContacts) : "compact"
-// (juste les noms, comportement historique) ou "detailed" (nom + numero).
-val CONTACT_PRESENTATION_STYLE = stringPreferencesKey("contact_presentation_style")
-
-// Presentation des resultats de recherche web (lu par ChatViewModel.searchWeb) :
-// "detailed" (titre + extrait + URL, comportement historique) ou "compact"
-// (juste les titres, une ligne).
-val WEB_SEARCH_PRESENTATION_STYLE = stringPreferencesKey("web_search_presentation_style")
+// Presentation des contacts/planning/recherche web : plus de reglage binaire
+// ici -- l'utilisateur decrit desormais la presentation voulue en detail
+// depuis le chat ("enregistre la presentation des contacts : ..."), et
+// CommandRouter la sauvegarde comme note libre dans le vault Obsidian (voir
+// CommandRouter.PREF_NOTE_CONTACTS / PREF_NOTE_PLANNING / PREF_NOTE_WEBSEARCH).
 
 data class SettingsUiState(
     val engine: EngineInfo? = null,
@@ -71,8 +68,6 @@ data class SettingsUiState(
     val bubbleUserColor: String = "gold",
     val bubbleAssistantColor: String = "cyan",
     val calendarGroupByDay: Boolean = true,
-    val contactPresentationStyle: String = "compact",
-    val webSearchPresentationStyle: String = "detailed",
     val gmailConnected: Boolean = false,
     val isConnectingGmail: Boolean = false,
     val gmailConnectError: String? = null,
@@ -101,8 +96,6 @@ class SettingsViewModel(
                 bubbleUserColor = settings.get(BUBBLE_USER_COLOR) ?: "gold",
                 bubbleAssistantColor = settings.get(BUBBLE_ASSISTANT_COLOR) ?: "cyan",
                 calendarGroupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true",
-                contactPresentationStyle = settings.get(CONTACT_PRESENTATION_STYLE) ?: "compact",
-                webSearchPresentationStyle = settings.get(WEB_SEARCH_PRESENTATION_STYLE) ?: "detailed",
             )
             _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
         }
@@ -162,16 +155,6 @@ class SettingsViewModel(
     fun setCalendarGroupByDay(groupByDay: Boolean) = viewModelScope.launch {
         settings.set(CALENDAR_GROUP_BY_DAY, groupByDay.toString())
         _state.value = _state.value.copy(calendarGroupByDay = groupByDay)
-    }
-
-    fun setContactPresentationStyle(style: String) = viewModelScope.launch {
-        settings.set(CONTACT_PRESENTATION_STYLE, style)
-        _state.value = _state.value.copy(contactPresentationStyle = style)
-    }
-
-    fun setWebSearchPresentationStyle(style: String) = viewModelScope.launch {
-        settings.set(WEB_SEARCH_PRESENTATION_STYLE, style)
-        _state.value = _state.value.copy(webSearchPresentationStyle = style)
     }
 
     /**

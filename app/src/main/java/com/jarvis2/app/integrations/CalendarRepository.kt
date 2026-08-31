@@ -33,16 +33,25 @@ class CalendarRepository(private val context: Context) {
         return ContentUris.parseId(uri)
     }
 
-    fun upcomingEvents(fromMillis: Long = System.currentTimeMillis(), limit: Int = 20): List<CalendarEvent> {
+    fun upcomingEvents(fromMillis: Long = System.currentTimeMillis(), limit: Int = 20): List<CalendarEvent> =
+        eventsInRange(fromMillis, Long.MAX_VALUE, limit)
+
+    /**
+     * Comme [upcomingEvents] mais borne aussi la fin de la periode -- utilise
+     * par CommandRouter.resolvePeriod() pour repondre a "planning de demain",
+     * "cette semaine", "ce mois", etc. plutot que de toujours renvoyer les N
+     * prochains evenements sans distinction de periode.
+     */
+    fun eventsInRange(fromMillis: Long, toMillis: Long, limit: Int = 50): List<CalendarEvent> {
         val projection = arrayOf(
             CalendarContract.Events._ID,
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DTSTART,
             CalendarContract.Events.DTEND,
         )
-        val selection = "${CalendarContract.Events.DTSTART} >= ?"
+        val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ?"
         val cursor = context.contentResolver.query(
-            CalendarContract.Events.CONTENT_URI, projection, selection, arrayOf(fromMillis.toString()),
+            CalendarContract.Events.CONTENT_URI, projection, selection, arrayOf(fromMillis.toString(), toMillis.toString()),
             "${CalendarContract.Events.DTSTART} ASC",
         ) ?: return emptyList()
 

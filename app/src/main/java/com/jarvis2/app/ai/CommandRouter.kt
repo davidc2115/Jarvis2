@@ -6,13 +6,12 @@ import com.jarvis2.app.integrations.CalendarEvent
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.MailSummary
+import com.jarvis2.app.obsidian.Note
 import com.jarvis2.app.obsidian.VaultRepository
 import com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR
 import com.jarvis2.app.ui.settings.BUBBLE_SHAPE
 import com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR
 import com.jarvis2.app.ui.settings.CALENDAR_GROUP_BY_DAY
-import com.jarvis2.app.ui.settings.CONTACT_PRESENTATION_STYLE
-import com.jarvis2.app.ui.settings.WEB_SEARCH_PRESENTATION_STYLE
 import com.jarvis2.app.ui.theme.BubbleStyle
 
 /** Outcome of trying to interpret a message as a device action rather than plain chat. */
@@ -45,6 +44,7 @@ class CommandRouter(
     private val vault: VaultRepository,
     private val memory: MemoryStore,
     private val settings: SettingsDataStore,
+    private val engineManager: AiEngineManager,
 ) {
 
     private companion object {
@@ -59,6 +59,15 @@ class CommandRouter(
         val FRENCH_TENS = mapOf(
             "vingt" to 20, "trente" to 30, "quarante" to 40, "cinquante" to 50, "soixante" to 60,
         )
+        val FRENCH_DAYS_OF_WEEK = mapOf(
+            "lundi" to java.time.DayOfWeek.MONDAY, "mardi" to java.time.DayOfWeek.TUESDAY,
+            "mercredi" to java.time.DayOfWeek.WEDNESDAY, "jeudi" to java.time.DayOfWeek.THURSDAY,
+            "vendredi" to java.time.DayOfWeek.FRIDAY, "samedi" to java.time.DayOfWeek.SATURDAY,
+            "dimanche" to java.time.DayOfWeek.SUNDAY,
+        )
+        const val PREF_NOTE_CONTACTS = "Preference presentation contacts"
+        const val PREF_NOTE_PLANNING = "Preference presentation planning"
+        const val PREF_NOTE_WEBSEARCH = "Preference presentation recherche web"
     }
 
     suspend fun route(rawInput: String): CommandResult {
@@ -105,21 +114,20 @@ class CommandRouter(
                 settings.set(CALENDAR_GROUP_BY_DAY, "false")
                 CommandResult.Handled("Planning affiché en liste simple.")
             },
-            Matcher(Regex("""contacts?.*(détaillé|detaille|détail|detail|avec.*numéro|avec.*numero)""")) {
-                settings.set(CONTACT_PRESENTATION_STYLE, "detailed")
-                CommandResult.Handled("Présentation des contacts : détaillée (avec numéro).")
+            // --- Presentation entierement libre (voir renderWithLlm plus bas) :
+            // au lieu de choisir entre deux styles figes, l'utilisateur decrit
+            // en detail la presentation voulue apres les deux-points, et
+            // c'est sauvegarde tel quel dans une note du vault Obsidian pour
+            // etre reapplique a chaque affichage (contacts/planning/recherche
+            // web), y compris apres redemarrage de l'appli.
+            Matcher(Regex("""(enregistre|retiens|mémorise|memorise).*(présentation|presentation).*contacts?.*:""")) { t ->
+                handleSavePresentationInstruction(t, PREF_NOTE_CONTACTS, "des contacts")
             },
-            Matcher(Regex("""contacts?.*(compact|sans détail|sans detail)""")) {
-                settings.set(CONTACT_PRESENTATION_STYLE, "compact")
-                CommandResult.Handled("Présentation des contacts : compacte.")
+            Matcher(Regex("""(enregistre|retiens|mémorise|memorise).*(présentation|presentation).*(planning|agenda).*:""")) { t ->
+                handleSavePresentationInstruction(t, PREF_NOTE_PLANNING, "du planning")
             },
-            Matcher(Regex("""(recherche web|résultats? web|resultats? web).*(détaillé|detaille|détail|detail)""")) {
-                settings.set(WEB_SEARCH_PRESENTATION_STYLE, "detailed")
-                CommandResult.Handled("Présentation des résultats de recherche web : détaillée.")
-            },
-            Matcher(Regex("""(recherche web|résultats? web|resultats? web).*(compact|simple)""")) {
-                settings.set(WEB_SEARCH_PRESENTATION_STYLE, "compact")
-                CommandResult.Handled("Présentation des résultats de recherche web : compacte.")
+            Matcher(Regex("""(enregistre|retiens|mémorise|memorise).*(présentation|presentation).*(recherche web|résultats? web|resultats? web).*:""")) { t ->
+                handleSavePresentationInstruction(t, PREF_NOTE_WEBSEARCH, "de la recherche web")
             },
             Matcher(Regex("(allume|active).*(torche|lampe|flash)")) {
                 integrations.flashlight.setTorch(true)
@@ -180,13 +188,14 @@ class CommandRouter(
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
-            Matcher(Regex("(mes|mon).*(prochains? événements?|prochains? rendez-vous|planning|agenda)")) {
-                val events = integrations.calendar.upcomingEvents(limit = 10)
+            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche))""")) { t ->
+                val period = resolvePeriod(t)
+                val limit = if (period.label == "Prochains événements") 10 else 50
+                val events = integrations.calendar.eventsInRange(period.fromMillis, period.toMillis, limit)
                 if (events.isEmpty()) {
-                    CommandResult.Handled("Aucun événement à venir dans l'agenda.")
+                    CommandResult.Handled("Aucun événement trouvé (${period.label.lowercase()}).")
                 } else {
-                    val groupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true"
-                    CommandResult.Handled(formatEvents(events, groupByDay))
+                    CommandResult.Handled(renderEvents(events, period.label))
                 }
             },
             Matcher(Regex("(crée|ajoute).*contact")) { t ->
@@ -199,8 +208,7 @@ class CommandRouter(
                 if (contacts.isEmpty()) {
                     CommandResult.Handled("Aucun contact trouvé (ou permission Contacts non accordée).")
                 } else {
-                    val detailed = (settings.get(CONTACT_PRESENTATION_STYLE) ?: "compact") == "detailed"
-                    CommandResult.Handled(formatContacts(contacts, detailed))
+                    CommandResult.Handled(renderContacts(contacts))
                 }
             },
             Matcher(Regex("cherche.*contact")) { t ->
@@ -468,11 +476,13 @@ class CommandRouter(
     /**
      * Presentation du planning (voir ui/settings/SettingsScreen.kt : reglage
      * "Regrouper par jour"). Groupe par defaut, sinon liste plate simple --
-     * les deux formats restent locaux, aucune dependance a un LLM.
+     * les deux formats restent locaux, aucune dependance a un LLM. [label]
+     * (ex: "Cette semaine", "Demain") est affiche en tete a la place du
+     * generique "Planning :" quand une periode precise a ete demandee.
      */
-    private fun formatEvents(events: List<CalendarEvent>, groupByDay: Boolean): String {
+    private fun formatEvents(events: List<CalendarEvent>, groupByDay: Boolean, label: String = "Planning"): String {
         if (!groupByDay) {
-            return "Prochains événements : " + events.joinToString(" ; ") { it.title }
+            return "$label : " + events.joinToString(" ; ") { it.title }
         }
 
         val zone = java.time.ZoneId.systemDefault()
@@ -482,7 +492,7 @@ class CommandRouter(
         val grouped = events.groupBy { java.time.Instant.ofEpochMilli(it.startMillis).atZone(zone).toLocalDate() }
 
         return buildString {
-            appendLine("Planning :")
+            appendLine("$label :")
             grouped.forEach { (date, dayEvents) ->
                 val dayLabel = date.format(dayFmt).replaceFirstChar { it.uppercase() }
                 appendLine("📅 $dayLabel")
@@ -492,6 +502,187 @@ class CommandRouter(
                 }
             }
         }.trim()
+    }
+
+    // ============================================================
+    // Presentation libre (contacts/planning/recherche web) : voir
+    // les matchers "enregistre la presentation de ... :" tout en
+    // haut de la liste. L'instruction est sauvegardee comme texte
+    // brut dans une note dediee du vault Obsidian (titre fixe) et
+    // relue a chaque affichage ; si aucune instruction n'a jamais
+    // ete enregistree pour la categorie, on retombe sur le format
+    // local simple (ancien comportement, 0% LLM, 100% fiable).
+    // ============================================================
+
+    private suspend fun handleSavePresentationInstruction(t: String, noteTitle: String, label: String): CommandResult {
+        val colonIdx = t.indexOf(':')
+        val instruction = if (colonIdx >= 0) t.substring(colonIdx + 1).trim() else ""
+        return if (instruction.isBlank()) {
+            CommandResult.Handled("Décris la présentation voulue après les deux-points, par exemple : \"enregistre la présentation $label : ...\".")
+        } else {
+            savePresentationInstruction(noteTitle, instruction.replaceFirstChar { it.uppercase() })
+            CommandResult.Handled("Présentation $label enregistrée dans le vault. Je l'appliquerai à chaque fois.")
+        }
+    }
+
+    private suspend fun getPresentationInstruction(noteTitle: String): String? =
+        vault.findByTitleOrFileName(noteTitle)?.body?.trim()?.takeIf { it.isNotBlank() }
+
+    private suspend fun savePresentationInstruction(noteTitle: String, instructions: String) {
+        val existing = vault.findByTitleOrFileName(noteTitle)
+        val note = Note(
+            fileName = existing?.fileName ?: "${noteTitle.replace(Regex("[\\/:*?\"<>|]"), "-")}.md",
+            title = noteTitle,
+            body = instructions,
+            frontmatter = existing?.frontmatter ?: emptyMap(),
+            tags = existing?.tags ?: emptySet(),
+            links = existing?.links ?: emptySet(),
+        )
+        vault.saveNote(note)
+    }
+
+    /**
+     * Fait rediger le rendu final par le moteur IA local en lui donnant les
+     * donnees brutes + l'instruction de presentation exacte de l'utilisateur,
+     * plutot que d'imposer un format fige en Kotlin -- c'est ce qui permet de
+     * respecter n'importe quelle presentation decrite en langage naturel. En
+     * cas d'echec du moteur (pas encore pret, erreur, etc.) on retombe sur
+     * [fallback] plutot que de laisser l'utilisateur sans reponse.
+     */
+    private suspend fun renderWithLlm(dataDescription: String, instruction: String, fallback: () -> String): String {
+        val prompt = buildString {
+            appendLine("Voici des donnees brutes a presenter dans un chat, en respectant STRICTEMENT les instructions de presentation personnalisees ci-dessous. Reponds uniquement avec le texte final a afficher, sans commentaire ni explication sur ce que tu fais.")
+            appendLine()
+            appendLine("Instructions de presentation de l'utilisateur :")
+            appendLine(instruction)
+            appendLine()
+            appendLine("Donnees brutes :")
+            append(dataDescription)
+        }
+        val result = engineManager.generate(
+            prompt = prompt,
+            history = emptyList(),
+            systemPrompt = "Tu es un moteur de mise en forme de texte. Tu reformates des donnees selon des instructions precises de l'utilisateur, sans avis ni texte hors-sujet.",
+        )
+        return result.getOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: fallback()
+    }
+
+    private suspend fun renderContacts(contacts: List<Contact>): String {
+        val instruction = getPresentationInstruction(PREF_NOTE_CONTACTS)
+            ?: return formatContacts(contacts, detailed = false)
+        val raw = contacts.joinToString("\n") { c ->
+            val phone = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
+            "- ${c.name} : $phone"
+        }
+        return renderWithLlm("Contacts (${contacts.size}) :\n$raw", instruction) { formatContacts(contacts, detailed = true) }
+    }
+
+    private suspend fun renderEvents(events: List<CalendarEvent>, label: String): String {
+        val instruction = getPresentationInstruction(PREF_NOTE_PLANNING)
+        if (instruction == null) {
+            val groupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true"
+            return formatEvents(events, groupByDay, label)
+        }
+        val zone = java.time.ZoneId.systemDefault()
+        val raw = events.joinToString("\n") { e ->
+            val dt = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone)
+            "- ${dt.toLocalDate()} ${dt.toLocalTime()} : ${e.title}"
+        }
+        return renderWithLlm("$label (${events.size} événement(s)) :\n$raw", instruction) { formatEvents(events, groupByDay = true, label = label) }
+    }
+
+    /**
+     * Rendu final des resultats de recherche web (voir ai/WebSearchTool.kt :
+     * searchAndExtract() a deja recupere le texte reel des pages, pas juste
+     * les extraits du moteur de recherche). Appele depuis ChatViewModel une
+     * fois la recherche effectuee -- respecte l'instruction de presentation
+     * "recherche web" sauvegardee, sinon synthese par defaut raisonnable
+     * (toujours via le LLM ici, car contrairement aux contacts/planning il
+     * n'existe pas de format local pertinent pour SYNTHETISER du texte libre
+     * extrait du web -- un simple listing de liens n'est plus le but).
+     */
+    suspend fun renderWebSearchResults(query: String, extracts: List<WebSearchExtract>): String {
+        if (extracts.isEmpty()) return "Aucun résultat exploitable trouvé sur le web pour « $query »."
+        val instruction = getPresentationInstruction(PREF_NOTE_WEBSEARCH)
+            ?: "Réponds directement et clairement à la question, en te basant sur les informations extraites ci-dessous. Cite brièvement les sources (titre + lien) à la fin."
+        val raw = extracts.joinToString("\n\n") { e -> "Source : ${e.title} (${e.url})\n${e.extractedText.take(1500)}" }
+        return renderWithLlm(
+            dataDescription = "Question de l'utilisateur : $query\n\nExtraits de pages web trouvees :\n$raw",
+            instruction = instruction,
+        ) {
+            "Résultats web pour « $query » :\n" + extracts.joinToString("\n") { "• ${it.title} — ${it.url}" }
+        }
+    }
+
+    /** Plage de dates resolue depuis une phrase (voir [resolvePeriod]). */
+    private data class DateRange(val fromMillis: Long, val toMillis: Long, val label: String)
+
+    /**
+     * Comprend "planning de demain", "cette semaine", "ce mois", "ce soir",
+     * un jour de la semaine ("planning de lundi"), etc. et renvoie la plage
+     * de temps correspondante -- entierement local/regex, pas de LLM, pour
+     * rester instantane comme le reste du CommandRouter. Si aucune periode
+     * n'est reconnue dans le texte, renvoie une plage "a partir de maintenant,
+     * sans limite" avec le label historique "Prochains événements" (ancien
+     * comportement par defaut : les N prochains evenements, tous confondus).
+     */
+    private fun resolvePeriod(t: String): DateRange {
+        val zone = java.time.ZoneId.systemDefault()
+        val now = java.time.ZonedDateTime.now(zone)
+        val today = now.toLocalDate()
+
+        fun ofDay(date: java.time.LocalDate, label: String) = DateRange(
+            date.atStartOfDay(zone).toInstant().toEpochMilli(),
+            date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            label,
+        )
+        fun ofRange(from: java.time.LocalDate, toExclusive: java.time.LocalDate, label: String) = DateRange(
+            from.atStartOfDay(zone).toInstant().toEpochMilli(),
+            toExclusive.atStartOfDay(zone).toInstant().toEpochMilli(),
+            label,
+        )
+        fun ofTimeWindow(fromHour: Int, toHour: Int, label: String) = DateRange(
+            today.atTime(fromHour, 0).atZone(zone).toInstant().toEpochMilli(),
+            today.atTime(toHour, 0).atZone(zone).toInstant().toEpochMilli(),
+            label,
+        )
+
+        return when {
+            Regex("après.?demain|apres.?demain").containsMatchIn(t) -> ofDay(today.plusDays(2), "Après-demain")
+            Regex("\bdemain\b").containsMatchIn(t) -> ofDay(today.plusDays(1), "Demain")
+            Regex("\baujourd'?hui\b").containsMatchIn(t) -> ofDay(today, "Aujourd'hui")
+            Regex("ce soir").containsMatchIn(t) -> ofTimeWindow(18, 24, "Ce soir")
+            Regex("cet? après.?midi|cet? apres.?midi").containsMatchIn(t) -> ofTimeWindow(12, 18, "Cet après-midi")
+            Regex("ce matin").containsMatchIn(t) -> ofTimeWindow(0, 12, "Ce matin")
+            Regex("week-?end").containsMatchIn(t) -> {
+                val saturday = today.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SATURDAY))
+                ofRange(saturday, saturday.plusDays(2), "Ce week-end")
+            }
+            Regex("semaine prochaine|la semaine qui vient").containsMatchIn(t) -> {
+                val nextMonday = today.plusWeeks(1).with(java.time.DayOfWeek.MONDAY)
+                ofRange(nextMonday, nextMonday.plusWeeks(1), "La semaine prochaine")
+            }
+            Regex("cette semaine").containsMatchIn(t) -> {
+                val monday = today.with(java.time.DayOfWeek.MONDAY)
+                ofRange(monday, monday.plusWeeks(1), "Cette semaine")
+            }
+            Regex("mois prochain").containsMatchIn(t) -> {
+                val firstNext = today.plusMonths(1).withDayOfMonth(1)
+                ofRange(firstNext, firstNext.plusMonths(1), "Le mois prochain")
+            }
+            Regex("ce mois|mois en cours|mois actuel").containsMatchIn(t) -> {
+                val first = today.withDayOfMonth(1)
+                ofRange(first, first.plusMonths(1), "Ce mois-ci")
+            }
+            FRENCH_DAYS_OF_WEEK.keys.any { t.contains(it) } -> {
+                val (kw, dow) = FRENCH_DAYS_OF_WEEK.entries.first { t.contains(it.key) }
+                val prochain = Regex("prochain|qui vient").containsMatchIn(t)
+                var date = today.with(java.time.temporal.TemporalAdjusters.nextOrSame(dow))
+                if (prochain && date == today) date = date.plusWeeks(1)
+                ofDay(date, kw.replaceFirstChar { it.uppercase() })
+            }
+            else -> DateRange(now.toInstant().toEpochMilli(), Long.MAX_VALUE, "Prochains événements")
+        }
     }
 
     /**

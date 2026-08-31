@@ -215,55 +215,32 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                 Switch(checked = state.calendarGroupByDay, onCheckedChange = { viewModel.setCalendarGroupByDay(it) })
                 Text(
-                    "Regrouper les événements par jour (sinon liste simple)",
+                    "Regrouper les événements par jour (par défaut, si aucune présentation personnalisée n'est enregistrée)",
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
-            Text(
-                "Modifiable aussi depuis le chat : \"regroupe mon planning par jour\" / \"planning en liste simple\".",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text("Présentation des contacts", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                FilterChip(
-                    selected = state.contactPresentationStyle == "compact",
-                    onClick = { viewModel.setContactPresentationStyle("compact") },
-                    label = { Text("Compacte") },
-                )
-                FilterChip(
-                    selected = state.contactPresentationStyle == "detailed",
-                    onClick = { viewModel.setContactPresentationStyle("detailed") },
-                    label = { Text("Détaillée (avec numéro)") },
-                )
-            }
+            Text("Présentation personnalisée (contacts, planning, recherche web)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
             Text(
-                "Modifiable aussi depuis le chat : \"contacts en détaillé\" / \"contacts en compact\".",
+                "Décris dans le chat, en détail, comment tu veux que chaque chose soit présentée -- Jarvis l'enregistre dans le vault et l'applique à chaque fois, jusqu'à ce que tu la changes. Par exemple :",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Text(
+                "« Enregistre la présentation des contacts : nom en gras, numéro et email sur la même ligne, trié par ordre alphabétique. »",
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            Text("Présentation de la recherche web", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                FilterChip(
-                    selected = state.webSearchPresentationStyle == "detailed",
-                    onClick = { viewModel.setWebSearchPresentationStyle("detailed") },
-                    label = { Text("Détaillée (titre + extrait + lien)") },
-                )
-                FilterChip(
-                    selected = state.webSearchPresentationStyle == "compact",
-                    onClick = { viewModel.setWebSearchPresentationStyle("compact") },
-                    label = { Text("Compacte (titres seuls)") },
-                )
-            }
             Text(
-                "Modifiable aussi depuis le chat : \"recherche web en détaillé\" / \"recherche web en compact\".",
+                "« Enregistre la présentation du planning : regroupe par semaine, indique la durée de chaque événement. »",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Text(
+                "« Enregistre la présentation de la recherche web : réponds en 3 phrases maximum, avec les sources en fin de message. »",
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
