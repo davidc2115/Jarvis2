@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -14,6 +15,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -59,28 +61,45 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                FilterChip(
-                    selected = state.preferredEngineId == "auto",
-                    onClick = { viewModel.setPreferredEngine("auto") },
-                    label = { Text("Automatique") },
-                )
-                FilterChip(
-                    selected = state.preferredEngineId == "aicore-gemini-nano",
-                    onClick = { viewModel.setPreferredEngine("aicore-gemini-nano") },
-                    label = { Text("Gemini Nano") },
-                )
-                FilterChip(
-                    selected = state.preferredEngineId == "smolvlm2-llamacpp",
-                    onClick = { viewModel.setPreferredEngine("smolvlm2-llamacpp") },
-                    label = { Text("SmolVLM2") },
-                )
+            // Liste verticale plutot qu'une Row de FilterChip : sur un ecran de
+            // telephone (~360-412dp), 6 chips avec libelles complets (ex.
+            // "Dolphin 3.0 (Qwen2.5 1.5B)") ne rentrent pas dans une Row non
+            // scrollable -- les options en trop sont simplement coupees hors
+            // ecran et donc impossibles a toucher, ce qui empechait de fait
+            // de choisir Qwen/Phi/Dolphin (et donc de declencher leur
+            // telechargement).
+            val engineOptions = buildList {
+                add(Triple("auto", "Automatique", state.preferredEngineId == "auto"))
+                add(Triple("aicore-gemini-nano", "Gemini Nano", state.preferredEngineId == "aicore-gemini-nano"))
+                add(Triple("smolvlm2-llamacpp", "SmolVLM2", state.preferredEngineId == "smolvlm2-llamacpp"))
                 LocalGgufModel.entries.forEach { model ->
-                    FilterChip(
-                        selected = state.preferredEngineId == "selectable-gguf" && state.selectedLocalModel == model.id,
-                        onClick = { viewModel.setPreferredEngine("selectable-gguf", model.id) },
-                        label = { Text(model.displayName) },
+                    add(
+                        Triple(
+                            "selectable-gguf:${model.id}",
+                            model.displayName,
+                            state.preferredEngineId == "selectable-gguf" && state.selectedLocalModel == model.id,
+                        ),
                     )
+                }
+            }
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                engineOptions.forEach { (id, label, selected) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = selected) {
+                                if (id.startsWith("selectable-gguf:")) {
+                                    viewModel.setPreferredEngine("selectable-gguf", id.removePrefix("selectable-gguf:"))
+                                } else {
+                                    viewModel.setPreferredEngine(id)
+                                }
+                            }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected, onClick = null)
+                        Text(label, modifier = Modifier.padding(start = 8.dp))
+                    }
                 }
             }
             if (state.isDownloadingLocalModel) {
