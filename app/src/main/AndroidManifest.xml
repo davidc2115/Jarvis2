@@ -61,7 +61,7 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
 
-    <!-- Comptes Google deja synchronises sur le telephone (lecture Gmail sans ecran de connexion separe -- voir integrations/GoogleAuthController.kt) -->
+    <!-- Comptes Google deja synchronises sur le telephone (lecture Gmail sans ecran de connexion separe, voir integrations/GoogleAuthController.kt) -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
     <!-- Storage (scoped storage + SAF cover most needs; legacy flag kept for <=28) -->
