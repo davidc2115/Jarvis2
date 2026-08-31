@@ -235,6 +235,36 @@ class CommandRouter(
                     else CommandResult.Handled("Trouvé : " + matches.joinToString(", ") { it.name })
                 }
             },
+            // --- Fiche d'un contact precis (numero/email/coordonnees) : voir
+            // integrations/ContactsRepository.kt pour phone/email reels.
+            // Place explicitement AVANT tout fallback LLM pour eviter qu'un
+            // petit modele local (1-3B parametres, sans acces aux vraies
+            // donnees) n'invente un numero/email plausible mais faux quand on
+            // lui demande "le numero de Marie" sans passer par ce matcher --
+            // c'est exactement le bug signale par l'utilisateur (numero
+            // invente, email en "@exemple.com").
+            Matcher(Regex("""(numéro|numero|téléphone|telephone|portable|coordonnées|coordonnees|adresse mail|adresse email|email|mail) de\s+\S""")) { t ->
+                val name = extractAfter(
+                    t,
+                    listOf(
+                        "adresse mail de", "adresse email de", "numéro de téléphone de", "numero de telephone de",
+                        "numéro de", "numero de", "téléphone de", "telephone de", "portable de",
+                        "coordonnées de", "coordonnees de", "email de", "mail de",
+                    ),
+                )
+                if (name == null) {
+                    CommandResult.Handled("Précise un nom, par exemple "numéro de Marie".")
+                } else {
+                    val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(name, ignoreCase = true) }
+                    when {
+                        matches.isEmpty() -> CommandResult.Handled("Aucun contact trouvé pour « $name » (ou permission Contacts non accordée).")
+                        matches.size > 1 -> CommandResult.Handled(
+                            "Plusieurs contacts correspondent à « $name » : " + matches.joinToString(", ") { it.name } + ". Précise lequel.",
+                        )
+                        else -> CommandResult.Handled(formatSingleContact(matches.first()))
+                    }
+                }
+            },
             Matcher(Regex("(génère|crée|exporte).*pdf")) { t ->
                 val file = fileGen.pdf.generateFromText(title = "Document Jarvis", body = t)
                 CommandResult.Handled("PDF généré: ${file.name}.")
@@ -462,11 +492,28 @@ class CommandRouter(
         }
         return buildString {
             appendLine("Contacts (${contacts.size}) :")
-            contacts.forEach { c ->
-                val phone = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
-                appendLine("👤 ${c.name} — $phone")
-            }
+            contacts.forEach { c -> appendLine("👤 ${c.name} — ${phoneOrPlaceholder(c)}") }
         }.trim()
+    }
+
+    private fun phoneOrPlaceholder(c: Contact) = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
+
+    /**
+     * Fiche d'un seul contact, avec UNIQUEMENT les vraies donnees issues de
+     * ContactsRepository -- jamais de valeur inventee. Si le champ n'existe
+     * pas dans les contacts du telephone, le dit explicitement plutot que de
+     * laisser un LLM (meme via renderWithLlm) le deviner/completer.
+     */
+    private fun formatSingleContact(c: Contact): String {
+        val phone = c.phone?.takeIf { it.isNotBlank() }
+        val email = c.email?.takeIf { it.isNotBlank() }
+        return buildString {
+            append("${c.name} : ")
+            append(phone ?: "pas de numéro enregistré")
+            append(", ")
+            append(email ?: "pas d'email enregistré")
+            append(".")
+        }
     }
 
     /**
@@ -592,8 +639,8 @@ class CommandRouter(
         val instruction = getPresentationInstruction(PREF_NOTE_CONTACTS)
             ?: return formatContacts(contacts, detailed = false)
         val raw = contacts.joinToString("\n") { c ->
-            val phone = c.phone?.takeIf { it.isNotBlank() } ?: "pas de numéro"
-            "- ${c.name} : $phone"
+            val email = c.email?.takeIf { it.isNotBlank() } ?: "pas d'email"
+            "- ${c.name} : ${phoneOrPlaceholder(c)}, $email"
         }
         return renderWithLlm("Contacts (${contacts.size}) :\n$raw", instruction) { formatContacts(contacts, detailed = true) }
     }

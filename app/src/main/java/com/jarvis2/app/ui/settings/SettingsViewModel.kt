@@ -51,6 +51,9 @@ val BUBBLE_ASSISTANT_COLOR = stringPreferencesKey("bubble_assistant_color")
 // ai/CommandRouter.kt) : regroupement par jour ou liste simple.
 val CALENDAR_GROUP_BY_DAY = stringPreferencesKey("calendar_group_by_day")
 
+// Lecture vocale des reponses de Jarvis (voir ai/TtsController.kt).
+val TTS_ENABLED = stringPreferencesKey("tts_enabled")
+
 // Presentation des contacts/planning/recherche web : plus de reglage binaire
 // ici -- l'utilisateur decrit desormais la presentation voulue en detail
 // depuis le chat ("enregistre la presentation des contacts : ..."), et
@@ -68,6 +71,7 @@ data class SettingsUiState(
     val bubbleUserColor: String = "gold",
     val bubbleAssistantColor: String = "cyan",
     val calendarGroupByDay: Boolean = true,
+    val ttsEnabled: Boolean = true,
     val gmailConnected: Boolean = false,
     val isConnectingGmail: Boolean = false,
     val gmailConnectError: String? = null,
@@ -96,6 +100,7 @@ class SettingsViewModel(
                 bubbleUserColor = settings.get(BUBBLE_USER_COLOR) ?: "gold",
                 bubbleAssistantColor = settings.get(BUBBLE_ASSISTANT_COLOR) ?: "cyan",
                 calendarGroupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true",
+                ttsEnabled = (settings.get(TTS_ENABLED) ?: "true") == "true",
             )
             _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
         }
@@ -167,6 +172,11 @@ class SettingsViewModel(
     fun setCalendarGroupByDay(groupByDay: Boolean) = viewModelScope.launch {
         settings.set(CALENDAR_GROUP_BY_DAY, groupByDay.toString())
         _state.value = _state.value.copy(calendarGroupByDay = groupByDay)
+    }
+
+    fun setTtsEnabled(enabled: Boolean) = viewModelScope.launch {
+        settings.set(TTS_ENABLED, enabled.toString())
+        _state.value = _state.value.copy(ttsEnabled = enabled)
     }
 
     /**

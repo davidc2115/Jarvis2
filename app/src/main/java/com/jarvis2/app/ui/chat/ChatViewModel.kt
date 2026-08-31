@@ -7,9 +7,11 @@ import com.jarvis2.app.ai.CommandRouter
 import com.jarvis2.app.ai.CommandResult
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.MemoryStore
+import com.jarvis2.app.ai.TtsController
 import com.jarvis2.app.ai.Turn
 import com.jarvis2.app.ai.WebSearchTool
 import com.jarvis2.app.data.SettingsDataStore
+import com.jarvis2.app.ui.settings.TTS_ENABLED
 import com.jarvis2.app.data.db.ChatDao
 import com.jarvis2.app.data.db.ChatMessageEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +41,7 @@ class ChatViewModel(
     private val chatDao: ChatDao,
     private val webSearchTool: WebSearchTool,
     private val settings: SettingsDataStore,
+    private val tts: TtsController,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -79,6 +82,7 @@ class ChatViewModel(
             when (val result = commandRouter.route(text)) {
                 is CommandResult.Handled -> {
                     appendMessage(Turn.Role.ASSISTANT, result.feedback)
+                    maybeSpeak(result.feedback)
                     memoryStore.remember("$text -> ${result.feedback}", source = "command")
                     // Certains commandes (voir CommandRouter.kt : matchers de
                     // presentation en tete de liste) changent bulleShape/
@@ -112,6 +116,7 @@ class ChatViewModel(
             val result = engineManager.generate(augmentedPrompt, history)
             result.onSuccess { reply ->
                 appendMessage(Turn.Role.ASSISTANT, reply)
+                maybeSpeak(reply)
                 memoryStore.remember("$text -> $reply", source = "chat")
                 if (looksUncertain(reply)) {
                     _state.value = _state.value.copy(pendingWebSearchQuery = text)
@@ -148,6 +153,7 @@ class ChatViewModel(
             result.onSuccess { extracts ->
                 val formatted = commandRouter.renderWebSearchResults(query, extracts)
                 appendMessage(Turn.Role.ASSISTANT, formatted)
+                maybeSpeak(formatted)
                 memoryStore.remember("$query -> $formatted", source = "web_search")
             }.onFailure { error ->
                 appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : ${error.message}")
@@ -177,4 +183,21 @@ class ChatViewModel(
     }
 
     private fun ChatMessageEntity.toUi() = ChatUiMessage(id, Turn.Role.valueOf(role), text, timestamp)
+
+    /**
+     * Lecture a voix haute des reponses de Jarvis (voir ai/TtsController.kt),
+     * activable/desactivable depuis Reglages (TTS_ENABLED). Best-effort : une
+     * erreur TTS ne doit jamais interrompre la conversation texte.
+     */
+    private suspend fun maybeSpeak(text: String) {
+        val enabled = (settings.get(TTS_ENABLED) ?: "true") == "true"
+        if (enabled) {
+            tts.speak(text)
+        }
+    }
+
+    override fun onCleared() {
+        tts.release()
+        super.onCleared()
+    }
 }

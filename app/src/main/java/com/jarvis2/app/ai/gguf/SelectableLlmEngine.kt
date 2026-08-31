@@ -4,6 +4,7 @@ import android.content.Context
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.LocalAiEngine
 import com.jarvis2.app.ai.ModelDownloader
+import com.jarvis2.app.ai.recommendedInferenceThreads
 import com.jarvis2.app.ai.Turn
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.ui.settings.SELECTED_LOCAL_MODEL
@@ -104,9 +105,9 @@ class SelectableLlmEngine(
                 topK = 40,
                 repeatPenalty = 1.3f,
                 contextLength = 4096,
-                numThreads = 4,
+                numThreads = recommendedInferenceThreads(),
                 useMmap = true,
-                flashAttention = false,
+                flashAttention = true,
                 batchSize = 512,
                 gpuLayers = 0,
             )

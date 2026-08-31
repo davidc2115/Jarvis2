@@ -211,6 +211,23 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
+            Text("Voix", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = state.ttsEnabled, onCheckedChange = { viewModel.setTtsEnabled(it) })
+                Text(
+                    "Lire les réponses de Jarvis à voix haute",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            Text(
+                "Le bouton micro à côté du champ de saisie du chat permet de dicter un message (dictée vocale système).",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
             Text("Présentation du planning", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                 Switch(checked = state.calendarGroupByDay, onCheckedChange = { viewModel.setCalendarGroupByDay(it) })

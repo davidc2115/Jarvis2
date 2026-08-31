@@ -5,7 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.provider.ContactsContract
 
-data class Contact(val id: String, val name: String, val phone: String?)
+data class Contact(val id: String, val name: String, val phone: String?, val email: String? = null)
 
 /** Reads/writes device contacts via ContactsContract — requires READ/WRITE_CONTACTS. */
 class ContactsRepository(private val context: Context) {
@@ -54,6 +54,7 @@ class ContactsRepository(private val context: Context) {
 
     fun listContacts(limit: Int = 100): List<Contact> {
         val phonesById = loadPhonesById()
+        val emailsById = loadEmailsById()
 
         val projection = arrayOf(
             ContactsContract.Contacts._ID,
@@ -69,7 +70,7 @@ class ContactsRepository(private val context: Context) {
             while (it.moveToNext() && result.size < limit) {
                 val id = it.getString(0)
                 val name = it.getString(1) ?: continue
-                result.add(Contact(id = id, name = name, phone = phonesById[id]))
+                result.add(Contact(id = id, name = name, phone = phonesById[id], email = emailsById[id]))
             }
             result
         }
@@ -100,6 +101,33 @@ class ContactsRepository(private val context: Context) {
                 // suffisant pour l'affichage, evite de compliquer Contact
                 // avec une liste de numeros pour un besoin d'UI simple.
                 if (!result.containsKey(contactId)) result[contactId] = number
+            }
+            result
+        }
+    }
+
+    /**
+     * Meme principe que [loadPhonesById] mais pour l'email -- ajoute apres
+     * coup car listContacts() ne remontait aucun email, ce qui forcait
+     * l'IA locale a en inventer un ("...@exemple.com") quand on lui
+     * demandait l'email d'un contact au lieu de dire "pas d'email
+     * enregistre" (voir le nouveau matcher dedie dans CommandRouter.kt).
+     */
+    private fun loadEmailsById(): Map<String, String> {
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Email.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Email.ADDRESS,
+        )
+        val cursor = context.contentResolver.query(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI, projection, null, null, null,
+        ) ?: return emptyMap()
+
+        return cursor.use {
+            val result = mutableMapOf<String, String>()
+            while (it.moveToNext()) {
+                val contactId = it.getString(0) ?: continue
+                val address = it.getString(1) ?: continue
+                if (!result.containsKey(contactId)) result[contactId] = address
             }
             result
         }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.LocalAiEngine
 import com.jarvis2.app.ai.ModelDownloader
+import com.jarvis2.app.ai.recommendedInferenceThreads
 import com.jarvis2.app.ai.Turn
 import com.llamatik.library.platform.GenStream
 import com.llamatik.library.platform.LlamaBridge
@@ -86,9 +87,9 @@ class SmolVlmEngine(
                 topK = 40,
                 repeatPenalty = 1.3f,
                 contextLength = 4096,
-                numThreads = 4,
+                numThreads = recommendedInferenceThreads(),
                 useMmap = true,
-                flashAttention = false,
+                flashAttention = true,
                 batchSize = 512,
                 gpuLayers = 0,
             )

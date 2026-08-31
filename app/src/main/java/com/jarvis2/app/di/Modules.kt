@@ -27,6 +27,7 @@ import com.jarvis2.app.integrations.MailReader
 import com.jarvis2.app.integrations.StorageAccess
 import com.jarvis2.app.integrations.WifiController
 import com.jarvis2.app.obsidian.VaultRepository
+import com.jarvis2.app.ai.TtsController
 import com.jarvis2.app.ui.chat.ChatViewModel
 import com.jarvis2.app.ui.filetools.FileToolsViewModel
 import com.jarvis2.app.ui.graph.GraphViewModel
@@ -77,10 +78,11 @@ val integrationsModule = module {
     single { FileGenRouter(get(), get(), get(), get(), get()) }
 
     single { VaultRepository(androidContext(), get(), get()) }
+    single { TtsController(androidContext()) }
 }
 
 val viewModelModule = module {
-    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { VaultViewModel(get()) }
     viewModel { GraphViewModel(get()) }
     viewModel { IntegrationsViewModel(get()) }
