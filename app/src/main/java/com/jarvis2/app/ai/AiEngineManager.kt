@@ -5,6 +5,7 @@ import com.jarvis2.app.ai.aicore.AiCoreEngine
 import com.jarvis2.app.ai.mediapipe.MediaPipeLlmEngine
 import com.jarvis2.app.ai.smolvlm.SmolVlmEngine
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -92,7 +93,7 @@ class AiEngineManager(private val context: Context) {
                 _activeEngine.value = engine.info()
             }
             val result = engine.generate(prompt, history, systemPrompt)
-            if (result.isSuccess) return result
+            if (result.isSuccess) return result.mapCatching { deduplicateRepeatedSentences(it) }
             lastResult = result
             // echec a l'execution malgre prepare() reussi (voir doc de
             // classe) -- on essaie le moteur suivant de la chaine.
@@ -102,7 +103,7 @@ class AiEngineManager(private val context: Context) {
 
     fun generateStreaming(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Flow<String> {
         val engine = current ?: aiCore
-        return engine.generateStreaming(prompt, history, systemPrompt)
+        return engine.generateStreaming(prompt, history, systemPrompt).map { deduplicateRepeatedSentences(it) }
     }
 
     /** Force a re-check, e.g. after the user imports/downloads a local model file in Settings. */

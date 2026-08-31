@@ -68,6 +68,32 @@ class SmolVlmEngine(private val context: Context) : LocalAiEngine {
             ).getOrThrow()
             downloadStatus = null
 
+            // Reglages releves par rapport aux defauts de Llamatik (temperature 0.7,
+            // repeatPenalty 1.1) : un modele aussi petit que SmolVLM2-500M part plus
+            // facilement en boucle de repetition ("la meme phrase se repete plusieurs
+            // fois", signale par l'utilisateur) faute de detecter proprement le token
+            // de fin de generation. Un repeatPenalty plus marque et une temperature/
+            // topP legerement resserres reduisent nettement ce risque sans degrader la
+            // qualite pour un usage chat conversationnel. Doivent etre appliques AVANT
+            // initGenerateModel : contextLength/useMmap/flashAttention/numThreads/
+            // batchSize ne prennent effet qu'au chargement du modele (voir doc
+            // Llamatik). Un filet de securite complementaire existe aussi cote
+            // AiEngineManager (voir ai/TextDedup.kt) au cas ou une boucle survienne
+            // malgre tout.
+            LlamaBridge.updateGenerateParams(
+                temperature = 0.6f,
+                maxTokens = 400,
+                topP = 0.9f,
+                topK = 40,
+                repeatPenalty = 1.3f,
+                contextLength = 4096,
+                numThreads = 4,
+                useMmap = true,
+                flashAttention = false,
+                batchSize = 512,
+                gpuLayers = 0,
+            )
+
             val loaded = LlamaBridge.initGenerateModel(modelFile.absolutePath)
             if (!loaded) {
                 throw IllegalStateException("LlamaBridge.initGenerateModel a échoué pour ${modelFile.absolutePath}")
