@@ -47,6 +47,20 @@ class CommandRouter(
     private val settings: SettingsDataStore,
 ) {
 
+    private companion object {
+        val FRENCH_UNITS = mapOf(
+            "zero" to 0, "un" to 1, "une" to 1, "deux" to 2, "trois" to 3, "quatre" to 4,
+            "cinq" to 5, "six" to 6, "sept" to 7, "huit" to 8, "neuf" to 9,
+        )
+        val FRENCH_TEENS = mapOf(
+            "dix" to 10, "onze" to 11, "douze" to 12, "treize" to 13, "quatorze" to 14,
+            "quinze" to 15, "seize" to 16,
+        )
+        val FRENCH_TENS = mapOf(
+            "vingt" to 20, "trente" to 30, "quarante" to 40, "cinquante" to 50, "soixante" to 60,
+        )
+    }
+
     suspend fun route(rawInput: String): CommandResult {
         val text = rawInput.trim().lowercase()
 
@@ -304,7 +318,8 @@ class CommandRouter(
 
     /** Detecte une heure du type "7h30", "7h", "19:45", "midi", "minuit". */
     private fun extractTime(text: String): Pair<Int, Int>? {
-        Regex("""(\d{1,2})\s*[h:]\s*(\d{1,2})?""").find(text)?.let { m ->
+        val normalized = normalizeFrenchNumberWords(text)
+        Regex("""(\d{1,2})\s*[h:]\s*(\d{1,2})?""").find(normalized)?.let { m ->
             val hour = m.groupValues[1].toIntOrNull()
             val minute = m.groupValues[2].ifBlank { "0" }.toIntOrNull()
             if (hour != null && minute != null && hour in 0..23 && minute in 0..59) return hour to minute
@@ -316,21 +331,67 @@ class CommandRouter(
 
     /** Additionne heures/minutes/secondes mentionnees (n'importe quel sous-ensemble) en secondes totales. */
     private fun extractDurationSeconds(text: String): Int? {
+        val normalized = normalizeFrenchNumberWords(text)
         var total = 0
         var found = false
-        Regex("""(\d+)\s*(heures?|h\b)""").find(text)?.let {
+        Regex("""(\d+)\s*(heures?|h\b)""").find(normalized)?.let {
             total += it.groupValues[1].toInt() * 3600
             found = true
         }
-        Regex("""(\d+)\s*(minutes?|min\b)""").find(text)?.let {
+        Regex("""(\d+)\s*(minutes?|min\b)""").find(normalized)?.let {
             total += it.groupValues[1].toInt() * 60
             found = true
         }
-        Regex("""(\d+)\s*(secondes?|sec\b)""").find(text)?.let {
+        Regex("""(\d+)\s*(secondes?|sec\b)""").find(normalized)?.let {
             total += it.groupValues[1].toInt()
             found = true
         }
         return if (found) total else null
+    }
+
+    /**
+     * Convertit les nombres ecrits en toutes lettres (0-69, ce qui couvre les
+     * durees/heures realistes d'un minuteur ou d'un reveil) en chiffres, pour
+     * qu'extractDurationSeconds/extractTime les reconnaissent aussi bien que
+     * "10". Necessaire car la dictee vocale Android ne convertit pas toujours
+     * les nombres parles en chiffres -- c'etait la cause du bug ou le
+     * minuteur redemandait une duree meme quand l'utilisateur en donnait une
+     * ("minuteur de dix minutes" ne contenait alors aucun chiffre).
+     *
+     * Limitation connue : ne couvre pas 70-99 (soixante-dix / quatre-vingts,
+     * constructions irregulieres) -- non prioritaire pour des durees de
+     * minuteur/reveil, ou les utilisateurs restent quasi toujours sous une
+     * heure/soixante minutes.
+     */
+    private fun normalizeFrenchNumberWords(text: String): String {
+        var result = " " + text.replace('-', ' ') + " "
+
+        // Dix-sept / dix-huit / dix-neuf doivent etre convertis avant que la
+        // passe "dix" seul (valeur 10) ne s'execute plus bas.
+        listOf(17 to "dix sept", 18 to "dix huit", 19 to "dix neuf").forEach { (value, phrase) ->
+            result = result.replace(Regex("""\b$phrase\b"""), " $value ")
+        }
+
+        // Dizaines composees : "vingt et un", "trente deux", ... "soixante neuf".
+        FRENCH_TENS.forEach { (tenWord, tenValue) ->
+            for (unit in 1..9) {
+                val unitWord = FRENCH_UNITS.entries.first { it.value == unit && it.key != "une" }.key
+                val liaison = if (unit == 1) "et $unitWord" else unitWord
+                result = result.replace(Regex("""\b$tenWord $liaison\b"""), " ${tenValue + unit} ")
+            }
+        }
+
+        // Dizaines seules restantes : "vingt", "trente", ...
+        FRENCH_TENS.forEach { (word, value) ->
+            result = result.replace(Regex("""\b$word\b"""), " $value ")
+        }
+
+        // Unites et 10-16 restants.
+        (FRENCH_TEENS + FRENCH_UNITS).forEach { (word, value) ->
+            result = result.replace(Regex("""\b$word\b"""), " $value ")
+        }
+
+        return result
     }
 
     private fun formatDuration(totalSeconds: Int): String {
