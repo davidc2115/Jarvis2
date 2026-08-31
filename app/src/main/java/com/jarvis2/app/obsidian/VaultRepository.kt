@@ -79,4 +79,39 @@ class VaultRepository(
         saveNote(note)
         return note
     }
+
+    /**
+     * Trouve une note par titre OU nom de fichier, insensible a la casse et
+     * a l'extension ".md" -- pour que les commandes du chat ("supprime la
+     * note Courses", "renomme Courses en Liste de courses") n'aient pas
+     * besoin de connaitre le nom de fichier exact.
+     */
+    suspend fun findByTitleOrFileName(query: String): Note? {
+        val target = query.trim().removeSuffix(".md").lowercase()
+        return listNotes().find {
+            it.fileName.removeSuffix(".md").lowercase() == target || it.title.trim().lowercase() == target
+        }
+    }
+
+    /**
+     * Renomme une note en changeant son titre (et donc son nom de fichier).
+     * Implemente comme sauvegarde-sous-nouveau-nom + suppression de
+     * l'ancien plutot qu'un vrai rename SAF, pour un comportement identique
+     * que le vault soit le dossier prive par defaut ou un arbre externe
+     * (DocumentFile.renameTo() a des contraintes differentes selon le
+     * provider). Retourne false si la note source est introuvable.
+     */
+    suspend fun renameNote(oldFileName: String, newTitle: String): Boolean = withContext(Dispatchers.IO) {
+        val existing = listNotes().find { it.fileName == oldFileName } ?: return@withContext false
+        val newFileName = "${newTitle.replace(Regex("[\\\\/:*?\"<>|]"), "-")}.md"
+        if (newFileName.equals(existing.fileName, ignoreCase = true)) return@withContext true
+        val updatedFrontmatter = if (existing.frontmatter.containsKey("title")) {
+            existing.frontmatter + ("title" to newTitle)
+        } else {
+            existing.frontmatter
+        }
+        saveNote(existing.copy(fileName = newFileName, title = newTitle, frontmatter = updatedFrontmatter))
+        deleteNote(oldFileName)
+        true
+    }
 }

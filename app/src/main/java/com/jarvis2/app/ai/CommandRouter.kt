@@ -174,6 +174,36 @@ class CommandRouter(
                 val note = vault.createNote(titleGuess, body = t)
                 CommandResult.Handled("Note « ${note.title} » créée dans le vault Obsidian.")
             },
+            Matcher(Regex("(renomme).*note")) { t ->
+                val pair = extractRenamePair(t)
+                if (pair == null) {
+                    CommandResult.Handled("Précise ainsi : \"renomme la note Courses en Liste de courses\".")
+                } else {
+                    val (oldName, newName) = pair
+                    val existing = vault.findByTitleOrFileName(oldName)
+                    if (existing == null) {
+                        CommandResult.Handled("Aucune note trouvée pour « $oldName ».")
+                    } else {
+                        val ok = vault.renameNote(existing.fileName, newName)
+                        if (ok) CommandResult.Handled("Note « $oldName » renommée en « $newName ».")
+                        else CommandResult.Handled("Échec du renommage de « $oldName ».")
+                    }
+                }
+            },
+            Matcher(Regex("(supprime|efface|retire).*note")) { t ->
+                val query = extractAfter(t, listOf("note"))
+                if (query == null) {
+                    CommandResult.Handled("Précise quelle note supprimer, par exemple \"supprime la note Courses\".")
+                } else {
+                    val existing = vault.findByTitleOrFileName(query)
+                    if (existing == null) {
+                        CommandResult.Handled("Aucune note trouvée pour « $query ».")
+                    } else {
+                        vault.deleteNote(existing.fileName)
+                        CommandResult.Handled("Note « ${existing.title} » supprimée.")
+                    }
+                }
+            },
             Matcher(Regex("cherche.*(vault|obsidian)|cherche.*note")) { t ->
                 val query = extractAfter(t, listOf("vault", "obsidian", "note"))
                 if (query == null) {
@@ -268,6 +298,24 @@ class CommandRouter(
                 }
             }
         }.trim()
+    }
+
+    /**
+     * Extrait (ancien nom, nouveau nom) depuis une phrase du type
+     * "renomme la note Courses en Liste de courses". Cherche le mot "note"
+     * puis coupe sur le premier " en " qui suit -- suffisant pour ce cas
+     * d'usage precis sans faire un vrai parseur NLP.
+     */
+    private fun extractRenamePair(text: String): Pair<String, String>? {
+        val noteIdx = text.indexOf("note")
+        if (noteIdx < 0) return null
+        val afterNote = text.substring(noteIdx + "note".length).trim()
+        val enIdx = afterNote.indexOf(" en ")
+        if (enIdx <= 0) return null
+        val oldName = afterNote.substring(0, enIdx).trim()
+        val newName = afterNote.substring(enIdx + " en ".length).trim()
+        if (oldName.isBlank() || newName.isBlank()) return null
+        return oldName.replaceFirstChar { it.uppercase() } to newName.replaceFirstChar { it.uppercase() }
     }
 
     private fun extractAfter(text: String, keywords: List<String>): String? {
