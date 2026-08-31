@@ -253,7 +253,7 @@ class CommandRouter(
                     ),
                 )
                 if (name == null) {
-                    CommandResult.Handled("Précise un nom, par exemple "numéro de Marie".")
+                    CommandResult.Handled("Précise un nom, par exemple « numéro de Marie ».")
                 } else {
                     val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(name, ignoreCase = true) }
                     when {
