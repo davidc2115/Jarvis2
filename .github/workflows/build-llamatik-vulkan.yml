@@ -1,0 +1,107 @@
+name: Build Llamatik (Vulkan)
+
+# Construit une AAR Android de Llamatik depuis les SOURCES (soumodule
+# llama.cpp inclus) avec le backend GPU Vulkan active (-DGGML_VULKAN=ON,
+# supporte depuis Llamatik v1.10.1 / PR #169 -- voir CONTRIBUTING.md du
+# depot ferranpons/llamatik). L'AAR prebuilt sur Maven Central est
+# CPU-only ; c'est le seul moyen d'obtenir un backend GPU sur Android avec
+# cette librairie (voir ai/DeviceCapabilities.kt pour le contexte complet).
+#
+# Volontairement SEPARE du CI principal (android-ci.yml) : une compilation
+# C++ complete de llama.cpp/ggml prend bien plus longtemps qu'un simple
+# assemblage Gradle, donc ce workflow ne tourne que sur declenchement manuel
+# (bouton "Run workflow"), jamais a chaque push.
+#
+# Restreint a l'ABI arm64-v8a uniquement (patch du build.gradle.kts de
+# Llamatik avant compilation) : c'est la seule architecture pertinente pour
+# des telephones recents (minSdk 26 = Android 8+), et batir aussi
+# armeabi-v7a/x86/x86_64 quadruplerait le temps de compilation C++ pour un
+# gain nul sur les appareils cibles.
+#
+# Le resultat est commite directement sur une branche dediee (jamais main)
+# via GITHUB_TOKEN -- a fusionner manuellement une fois l'AAR verifiee.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-vulkan-aar:
+    name: Build Llamatik Android AAR (Vulkan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Jarvis2
+        uses: actions/checkout@v4
+        with:
+          path: jarvis2
+
+      - name: Checkout Llamatik (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: ferranpons/llamatik
+          ref: v1.10.1
+          submodules: recursive
+          path: llamatik-src
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle (with dependency caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses (NDK auto-provisioning)
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Install glslc (GLSL -> SPIR-V shader compiler, needed by ggml-vulkan)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc || sudo apt-get install -y glslang-tools shaderc || true
+          which glslc || echo "::warning::glslc introuvable via apt -- le build ggml-vulkan tentera son propre fallback (FetchContent shaderc), ce qui rallonge le temps de compilation."
+
+      - name: Restrict native build to arm64-v8a only (faster CI build)
+        run: |
+          sed -i 's/abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")/abiFilters += setOf("arm64-v8a")/' llamatik-src/library/build.gradle.kts
+          grep -n "abiFilters" llamatik-src/library/build.gradle.kts
+
+      - name: Build Llamatik Android library AAR with Vulkan backend
+        working-directory: llamatik-src
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON" --stacktrace
+
+      - name: Locate the built AAR
+        id: locate
+        run: |
+          AAR_PATH=$(find llamatik-src/library/build/outputs/aar -name "*.aar" | head -n 1)
+          if [ -z "$AAR_PATH" ]; then
+            echo "::error::Aucune AAR trouvee sous llamatik-src/library/build/outputs/aar"
+            exit 1
+          fi
+          echo "aar_path=$AAR_PATH" >> "$GITHUB_OUTPUT"
+          ls -la "$AAR_PATH"
+
+      - name: Upload AAR as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llamatik-vulkan-aar
+          path: ${{ steps.locate.outputs.aar_path }}
+          retention-days: 30
+
+      - name: Commit AAR to a dedicated branch in Jarvis2
+        working-directory: jarvis2
+        run: |
+          mkdir -p app/libs
+          cp "../${{ steps.locate.outputs.aar_path }}" app/libs/llamatik-vulkan-release.aar
+          git config user.name "Jarvis Vulkan Build Bot"
+          git config user.email "jarvis-vulkan-bot@local"
+          git checkout -b ci/vulkan-aar
+          git add app/libs/llamatik-vulkan-release.aar
+          git commit -m "Llamatik AAR (Android, Vulkan backend, arm64-v8a) construite depuis les sources v1.10.1 -DGGML_VULKAN=ON"
+          git push --force origin HEAD:ci/vulkan-aar
