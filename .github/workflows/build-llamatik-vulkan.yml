@@ -61,11 +61,23 @@ jobs:
       - name: Accept Android SDK licenses (NDK auto-provisioning)
         run: yes | sdkmanager --licenses > /dev/null || true
 
-      - name: Install glslc (GLSL -> SPIR-V shader compiler, needed by ggml-vulkan)
+      - name: Install Vulkan SDK (LunarG) -- fournit glslc + les configs CMake SPIRV-Headers/SPIRV-Tools
+        # Le simple paquet apt "glslc" ne suffit pas : ggml-vulkan (CMakeLists.txt de
+        # llama.cpp/ggml/src/ggml-vulkan) fait aussi find_package(SPIRV-Headers) et
+        # find_package(SPIRV-Tools) pour son outil host vulkan-shaders-gen, et ces
+        # fichiers de config CMake ne sont pas fournis par les paquets Ubuntu standards
+        # (glslang-tools/shaderc) -- c'est la cause exacte de l'echec du run precedent
+        # ("Could not find a package configuration file provided by SPIRV-Headers").
+        # Le SDK LunarG fournit tout ca ensemble avec les *Config.cmake attendus ; c'est
+        # aussi ce qu'utilise le CI officiel de ggml-org/llama.cpp pour son build Vulkan.
         run: |
+          set -e
+          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+          UBUNTU_CODENAME=$(lsb_release -cs)
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list "https://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list"
           sudo apt-get update
-          sudo apt-get install -y glslc || sudo apt-get install -y glslang-tools shaderc || true
-          which glslc || echo "::warning::glslc introuvable via apt -- le build ggml-vulkan tentera son propre fallback (FetchContent shaderc), ce qui rallonge le temps de compilation."
+          sudo apt-get install -y vulkan-sdk
+          which glslc && glslc --version
 
       - name: Restrict native build to arm64-v8a only (faster CI build)
         run: |
