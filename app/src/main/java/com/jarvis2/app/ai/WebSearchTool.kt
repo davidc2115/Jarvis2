@@ -93,18 +93,53 @@ class WebSearchTool(
         }
     }.getOrNull()
 
+    /**
+     * Extraction du texte lisible d'une page HTML -- volontairement basee sur des
+     * regex (pas de dependance de parsing HTML lourde), mais avec deux ameliorations
+     * cruciales par rapport a la version initiale (cause racine probable des "infos
+     * incorrectes" signalees par l'utilisateur) :
+     *
+     * 1. Les blocs de PUR BRUIT (nav/header/footer/aside/menus/formulaires/boutons)
+     *    sont retires AVANT le reste -- sans ca, les 4000 premiers caracteres d'une
+     *    page (menu, bandeau cookies, liens "articles similaires"...) contiennent
+     *    tres souvent ZERO contenu utile, et le petit modele local, oblige de
+     *    repondre quand meme, invente une reponse plausible a partir de ce bruit.
+     * 2. Si la page contient une balise <article> ou <main> (quasi systematique sur
+     *    les sites d'actualite/blogs/wikis), on isole SON contenu au lieu de garder
+     *    tout le <body> -- c'est la ou se trouve la vraie reponse.
+     */
     private fun extractReadableText(html: String): String {
         var text = html
         text = Regex("(?is)<script.*?</script>").replace(text, " ")
         text = Regex("(?is)<style.*?</style>").replace(text, " ")
+        text = Regex("(?is)<noscript.*?</noscript>").replace(text, " ")
         text = Regex("(?is)<!--.*?-->").replace(text, " ")
+        // Bruit structurel : jamais la reponse, souvent la majorite des premiers
+        // caracteres de la page (menu de navigation, pied de page, barre laterale,
+        // formulaires de newsletter/recherche, boutons de partage).
+        text = Regex("(?is)<nav.*?</nav>").replace(text, " ")
+        text = Regex("(?is)<header.*?</header>").replace(text, " ")
+        text = Regex("(?is)<footer.*?</footer>").replace(text, " ")
+        text = Regex("(?is)<aside.*?</aside>").replace(text, " ")
+        text = Regex("(?is)<form.*?</form>").replace(text, " ")
+        // Si un conteneur d'article/contenu principal existe, on ne garde QUE lui --
+        // sinon on continue avec le document entier (deja nettoye du bruit ci-dessus).
+        val articleMatch = Regex("(?is)<article[^>]*>(.*?)</article>").find(text)
+            ?: Regex("(?is)<main[^>]*>(.*?)</main>").find(text)
+        if (articleMatch != null && articleMatch.groupValues[1].length > 200) {
+            text = articleMatch.groupValues[1]
+        }
         text = Regex("(?is)<(br|p|div|li|h[1-6]|tr)[^>]*>").replace(text, "\n")
         text = Regex("(?is)<[^>]+>").replace(text, " ")
         text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&#39;", "'")
             .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">")
         text = Regex("[ \\t]+").replace(text, " ")
         text = Regex("\n\\s*\n+").replace(text, "\n")
-        return text.trim().take(4000) // limite raisonnable avant envoi au moteur IA local
+        // Retire les lignes-bruit residuelles trop courtes pour etre une vraie phrase
+        // (ex: "Accepter" / "Menu" / "S'abonner" isoles qui auraient survecu au
+        // nettoyage structurel ci-dessus).
+        text = text.lines().filter { it.trim().length > 3 || it.isBlank() }.joinToString("\n")
+        return text.trim().take(5000) // limite raisonnable avant envoi au moteur IA local
     }
 
     private fun parseResults(body: String): List<WebSearchResult> {

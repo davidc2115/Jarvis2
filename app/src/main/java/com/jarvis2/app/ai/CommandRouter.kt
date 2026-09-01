@@ -67,6 +67,11 @@ class CommandRouter(
             "vendredi" to java.time.DayOfWeek.FRIDAY, "samedi" to java.time.DayOfWeek.SATURDAY,
             "dimanche" to java.time.DayOfWeek.SUNDAY,
         )
+        val FRENCH_MONTHS = mapOf(
+            "janvier" to 1, "fevrier" to 2, "février" to 2, "mars" to 3, "avril" to 4,
+            "mai" to 5, "juin" to 6, "juillet" to 7, "aout" to 8, "août" to 8,
+            "septembre" to 9, "octobre" to 10, "novembre" to 11, "decembre" to 12, "décembre" to 12,
+        )
         const val PREF_NOTE_CONTACTS = "Preference presentation contacts"
         const val PREF_NOTE_PLANNING = "Preference presentation planning"
         const val PREF_NOTE_WEBSEARCH = "Preference presentation recherche web"
@@ -226,7 +231,7 @@ class CommandRouter(
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
-            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche))|((planning|agenda)\s+de\s+\S+)""")) { t ->
+            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|avant.?hier|hier|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}/\d{1,2}|dans\s+\d+\s+jours?))|((planning|agenda)\s+de\s+\S+)""")) { t ->
                 val period = resolvePeriod(t)
                 val limit = if (period.label == "Prochains événements") 10 else 50
                 // --- Filtrage par calendrier precis ("planning de Thomas") : voir
@@ -881,8 +886,8 @@ class CommandRouter(
     suspend fun renderWebSearchResults(query: String, extracts: List<WebSearchExtract>): String {
         if (extracts.isEmpty()) return "Aucun résultat exploitable trouvé sur le web pour « $query »."
         val instruction = getPresentationInstruction(PREF_NOTE_WEBSEARCH)
-            ?: "Réponds directement et clairement à la question, en te basant sur les informations extraites ci-dessous. Cite brièvement les sources (titre + lien) à la fin."
-        val raw = extracts.joinToString("\n\n") { e -> "Source : ${e.title} (${e.url})\n${e.extractedText.take(1500)}" }
+            ?: "Réponds directement et clairement à la question, en te basant UNIQUEMENT sur les informations extraites ci-dessous. N'invente jamais un chiffre, une date ou un fait qui n'apparaît pas explicitement dans les extraits : si les extraits ne contiennent pas la réponse, dis-le clairement au lieu de deviner. Cite brièvement les sources (titre + lien) à la fin."
+        val raw = extracts.joinToString("\n\n") { e -> "Source : ${e.title} (${e.url})\n${e.extractedText.take(2000)}" }
         return renderWithLlm(
             dataDescription = "Question de l'utilisateur : $query\n\nExtraits de pages web trouvees :\n$raw",
             instruction = instruction,
@@ -955,17 +960,32 @@ class CommandRouter(
 
     /**
      * Comprend "planning de demain", "cette semaine", "ce mois", "ce soir",
-     * un jour de la semaine ("planning de lundi"), etc. et renvoie la plage
-     * de temps correspondante -- entierement local/regex, pas de LLM, pour
-     * rester instantane comme le reste du CommandRouter. Si aucune periode
-     * n'est reconnue dans le texte, renvoie une plage "a partir de maintenant,
-     * sans limite" avec le label historique "Prochains événements" (ancien
-     * comportement par defaut : les N prochains evenements, tous confondus).
+     * un jour de la semaine ("planning de lundi"), une date explicite
+     * ("le 15/03", "le 15 mars"), "dans X jours", "hier"/"avant-hier", etc.
+     * et renvoie la plage de temps correspondante -- entierement local/regex,
+     * pas de LLM, pour rester instantane comme le reste du CommandRouter.
+     *
+     * CORRECTIF IMPORTANT (signalement utilisateur repete : "le planning
+     * affiche toujours plusieurs jours") : avant, quand AUCUNE periode
+     * n'etait reconnue dans le texte, la fonction retombait sur une plage
+     * "a partir de maintenant, SANS LIMITE" (Long.MAX_VALUE) -- c'est-a-dire
+     * TOUS les evenements a venir, sur des mois. N'importe quelle formulation
+     * de "mon planning" non couverte explicitement par une des branches
+     * ci-dessous (ex: "c'est quoi mon planning ?", "montre-moi l'agenda")
+     * finissait donc systematiquement par afficher un dump multi-jours au
+     * lieu d'un jour precis, meme quand l'utilisateur pensait clairement a
+     * "aujourd'hui". Comportement corrige pour matcher celui de l'ancienne
+     * appli (Newjarvis/CalendarController.getTodayEvents) : le repli par
+     * defaut est desormais AUJOURD'HUI, jamais un dump sans limite -- sauf
+     * si l'utilisateur demande EXPLICITEMENT "mes prochains evenements/rdv"
+     * / "a venir" / "a suivre", auquel cas on renvoie une fenetre bornee a
+     * 30 jours (jamais litteralement infinie).
      */
     private fun resolvePeriod(t: String): DateRange {
         val zone = java.time.ZoneId.systemDefault()
         val now = java.time.ZonedDateTime.now(zone)
         val today = now.toLocalDate()
+        val normalized = normalizeFrenchNumberWords(t)
 
         fun ofDay(date: java.time.LocalDate, label: String) = DateRange(
             date.atStartOfDay(zone).toInstant().toEpochMilli(),
@@ -982,11 +1002,59 @@ class CommandRouter(
             today.atTime(toHour, 0).atZone(zone).toInstant().toEpochMilli(),
             label,
         )
+        fun dayLabel(date: java.time.LocalDate) = date
+            .format(java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM", java.util.Locale.FRENCH))
+            .replaceFirstChar { it.uppercase() }
+
+        // --- Date explicite JJ/MM ou JJ/MM/AAAA (priorite haute : un jour
+        // precis demande explicitement ne doit jamais retomber sur autre chose).
+        Regex("""\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b""").find(t)?.let { m ->
+            val day = m.groupValues[1].toIntOrNull()
+            val month = m.groupValues[2].toIntOrNull()
+            val yearRaw = m.groupValues[3]
+            val year = when {
+                yearRaw.isBlank() -> today.year
+                yearRaw.length <= 2 -> 2000 + yearRaw.toInt()
+                else -> yearRaw.toInt()
+            }
+            if (day != null && month != null) {
+                runCatching { java.time.LocalDate.of(year, month, day) }.getOrNull()?.let { date ->
+                    return ofDay(date, dayLabel(date))
+                }
+            }
+        }
+
+        // --- Date explicite "15 mars" / "le 15 mars" (nom de mois en toutes
+        // lettres). Si la date tombee est deja passee de plus d'un jour cette
+        // annee, on suppose l'annee prochaine (personne ne demande son
+        // planning d'une date passee sans le preciser autrement).
+        FRENCH_MONTHS.entries.firstOrNull { normalized.contains(it.key) }?.let { (monthWord, monthNum) ->
+            Regex("""\b(\d{1,2})\s+$monthWord\b""").find(normalized)?.let { m ->
+                val day = m.groupValues[1].toIntOrNull()
+                if (day != null) {
+                    var date = runCatching { java.time.LocalDate.of(today.year, monthNum, day) }.getOrNull()
+                    if (date != null && date.isBefore(today.minusDays(1))) date = date.plusYears(1)
+                    if (date != null) return ofDay(date, dayLabel(date))
+                }
+            }
+        }
+
+        // --- "dans X jours" (chiffres ou nombres ecrits en toutes lettres,
+        // deja convertis dans [normalized] par normalizeFrenchNumberWords).
+        Regex("""dans\s+(\d+)\s+jours?""").find(normalized)?.let { m ->
+            val days = m.groupValues[1].toIntOrNull()
+            if (days != null && days in 1..365) {
+                val date = today.plusDays(days.toLong())
+                return ofDay(date, dayLabel(date))
+            }
+        }
 
         return when {
             Regex("après.?demain|apres.?demain").containsMatchIn(t) -> ofDay(today.plusDays(2), "Après-demain")
             Regex("""\bdemain\b""").containsMatchIn(t) -> ofDay(today.plusDays(1), "Demain")
             Regex("""\baujourd'?hui\b""").containsMatchIn(t) -> ofDay(today, "Aujourd'hui")
+            Regex("avant.?hier").containsMatchIn(t) -> ofDay(today.minusDays(2), "Avant-hier")
+            Regex("""\bhier\b""").containsMatchIn(t) -> ofDay(today.minusDays(1), "Hier")
             Regex("ce soir").containsMatchIn(t) -> ofTimeWindow(18, 24, "Ce soir")
             Regex("cet? après.?midi|cet? apres.?midi").containsMatchIn(t) -> ofTimeWindow(12, 18, "Cet après-midi")
             Regex("ce matin").containsMatchIn(t) -> ofTimeWindow(0, 12, "Ce matin")
@@ -1017,7 +1085,14 @@ class CommandRouter(
                 if (prochain && date == today) date = date.plusWeeks(1)
                 ofDay(date, kw.replaceFirstChar { it.uppercase() })
             }
-            else -> DateRange(now.toInstant().toEpochMilli(), Long.MAX_VALUE, "Prochains événements")
+            // Aucune periode reconnue : "mes prochains evenements/rdv a venir"
+            // demande explicitement une liste (bornee a 30 jours, jamais
+            // litteralement infinie) -- toute autre formulation ambigue de
+            // "planning"/"agenda" retombe sur AUJOURD'HUI, jamais un dump
+            // multi-jours (voir le commentaire de la fonction ci-dessus).
+            Regex("prochains?\s+(é|e)v(é|e)nements?|prochains?\s+rendez-?vous|[aà]\s+venir|suivants?").containsMatchIn(t) ->
+                DateRange(now.toInstant().toEpochMilli(), today.plusDays(30).atStartOfDay(zone).toInstant().toEpochMilli(), "Prochains événements")
+            else -> ofDay(today, "Aujourd'hui")
         }
     }
 
