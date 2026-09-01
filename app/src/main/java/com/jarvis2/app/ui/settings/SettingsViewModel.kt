@@ -10,6 +10,8 @@ import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.GoogleAuthNeedsUserActionException
+import com.jarvis2.app.proactive.PROACTIVE_BRIEFING_ENABLED
+import com.jarvis2.app.proactive.PROACTIVE_REMINDERS_ENABLED
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,6 +73,8 @@ data class SettingsUiState(
     val bubbleAssistantColor: String = "cyan",
     val calendarGroupByDay: Boolean = true,
     val ttsEnabled: Boolean = true,
+    val proactiveRemindersEnabled: Boolean = true,
+    val proactiveBriefingEnabled: Boolean = true,
     val gmailConnected: Boolean = false,
     val isConnectingGmail: Boolean = false,
     val gmailConnectError: String? = null,
@@ -100,6 +104,8 @@ class SettingsViewModel(
                 bubbleAssistantColor = settings.get(BUBBLE_ASSISTANT_COLOR) ?: "cyan",
                 calendarGroupByDay = (settings.get(CALENDAR_GROUP_BY_DAY) ?: "true") == "true",
                 ttsEnabled = (settings.get(TTS_ENABLED) ?: "true") == "true",
+                proactiveRemindersEnabled = (settings.get(PROACTIVE_REMINDERS_ENABLED) ?: "true") == "true",
+                proactiveBriefingEnabled = (settings.get(PROACTIVE_BRIEFING_ENABLED) ?: "true") == "true",
             )
             _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
         }
@@ -176,6 +182,18 @@ class SettingsViewModel(
     fun setTtsEnabled(enabled: Boolean) = viewModelScope.launch {
         settings.set(TTS_ENABLED, enabled.toString())
         _state.value = _state.value.copy(ttsEnabled = enabled)
+    }
+
+    /** Rappels avant un evenement d'agenda (voir proactive/ProactiveReminderWorker.kt, task #242). */
+    fun setProactiveRemindersEnabled(enabled: Boolean) = viewModelScope.launch {
+        settings.set(PROACTIVE_REMINDERS_ENABLED, enabled.toString())
+        _state.value = _state.value.copy(proactiveRemindersEnabled = enabled)
+    }
+
+    /** Notification quotidienne resumant les evenements du jour (voir proactive/MorningBriefingWorker.kt, task #242). */
+    fun setProactiveBriefingEnabled(enabled: Boolean) = viewModelScope.launch {
+        settings.set(PROACTIVE_BRIEFING_ENABLED, enabled.toString())
+        _state.value = _state.value.copy(proactiveBriefingEnabled = enabled)
     }
 
     /**

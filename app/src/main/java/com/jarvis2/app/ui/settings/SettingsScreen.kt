@@ -239,6 +239,26 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
+            Text("Proactivité", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = state.proactiveRemindersEnabled, onCheckedChange = { viewModel.setProactiveRemindersEnabled(it) })
+                Text(
+                    "Rappel notifié 15 min avant chaque événement d'agenda",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = state.proactiveBriefingEnabled, onCheckedChange = { viewModel.setProactiveBriefingEnabled(it) })
+                Text(
+                    "Briefing du matin (résumé de la journée, vers 8h)",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
             Text("Présentation personnalisée (contacts, planning, recherche web)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
             Text(
                 "Décris dans le chat, en détail, comment tu veux que chaque chose soit présentée -- Jarvis l'enregistre dans le vault et l'applique à chaque fois, jusqu'à ce que tu la changes. Par exemple :",
