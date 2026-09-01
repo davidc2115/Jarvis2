@@ -86,7 +86,17 @@ jobs:
 
       - name: Build Llamatik Android library AAR with Vulkan backend
         working-directory: llamatik-src
-        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON" --stacktrace
+        # CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH est indispensable ici : le toolchain
+        # CMake du NDK Android (android.toolchain.cmake) force ce mode a ONLY par defaut,
+        # ce qui restreint find_package(...) au seul sysroot NDK et l'empeche de voir les
+        # paquets installes cote hote (ex: SPIRV-Headers/SPIRV-Tools fournis par le SDK
+        # Vulkan LunarG installe a l'etape precedente) -- meme quand ils sont bien presents
+        # sur la machine. ggml-vulkan a besoin de ces paquets hote pour compiler son outil
+        # vulkan-shaders-gen, qui tourne sur le build host (pas sur Android) durant la
+        # compilation croisee. BOTH autorise la recherche a la fois dans le sysroot NDK et
+        # dans les chemins systeme standards, sans quoi le configure CMake echoue avec
+        # "Could not find a package configuration file provided by SPIRV-Headers".
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH" --stacktrace
 
       - name: Locate the built AAR
         id: locate
