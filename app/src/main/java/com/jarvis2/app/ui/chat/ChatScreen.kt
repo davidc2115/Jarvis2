@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.Turn
@@ -79,7 +81,20 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.size - 1)
     }
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        // --- Fond HUD "JARVIS vivant" (voir ui/chat/HudOrb.kt) : demande
+        // explicite de l'utilisateur d'un "veritable systeme JARVIS/Ironman
+        // comme la premiere version, mais en local". Alpha volontairement
+        // faible pour ne jamais nuire a la lisibilite des messages, qui
+        // restent affiches par-dessus sur leurs propres surfaces opaques.
+        HudOrbBackground(
+            voiceState = state.voiceState,
+            thinking = state.isThinking,
+            modifier = Modifier.fillMaxSize(),
+            alpha = 0.55f,
+        )
+        Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = {
@@ -185,6 +200,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                     Icon(Icons.Filled.Send, contentDescription = "Envoyer", tint = JarvisCyan)
                 }
             }
+        }
         }
     }
 }
