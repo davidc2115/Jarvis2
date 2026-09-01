@@ -43,6 +43,43 @@ class MailReader(
     /** Pour l'affichage Reglages uniquement -- voir GoogleAuthController.isConnected(). */
     suspend fun isConfigured(): Boolean = googleAuth.isConnected()
 
+    /**
+     * Diagnostic detaille (pas juste connecte/non connecte) -- expose la
+     * vraie raison d'un echec au lieu du message generique "Aucun compte
+     * Google connecte" qui masquait toutes les causes possibles derriere le
+     * meme texte. Utile car "toujours pas d'acces au mail" peut venir de
+     * plusieurs endroits bien distincts : aucun compte Google sur le
+     * telephone, ou un compte present mais le jeton refuse par Google (app
+     * non enregistree/verifiee cote Google Cloud Console, compte non ajoute
+     * comme testeur tant que l'appli n'est pas publiee, API Gmail non
+     * activee, etc.) -- chacun necessitant une action differente.
+     */
+    suspend fun diagnosticStatus(): String {
+        val accounts = googleAuth.listAccounts()
+        if (accounts.isEmpty()) {
+            return "Aucun compte Google trouvé sur ce téléphone. Ajoute-en un dans Réglages Android → Comptes, puis réessaie."
+        }
+        val accountsLabel = accounts.joinToString(", ") { it.name }
+        val result = googleAuth.getAccessToken()
+        return result.fold(
+            onSuccess = {
+                "Compte(s) Google détecté(s) : $accountsLabel. Jeton Gmail obtenu avec succès — l'accès mail fonctionne."
+            },
+            onFailure = { e ->
+                buildString {
+                    append("Compte(s) Google détecté(s) : $accountsLabel. ")
+                    append("Échec de l'obtention du jeton Gmail : ${e::class.simpleName} — ${e.message ?: "pas de détail fourni par Google"}. ")
+                    append(
+                        "Cause la plus fréquente : le client OAuth Android (package com.jarvis2.app.debug, " +
+                            "SHA-1 du debug.keystore commité) n'est pas enregistré/vérifié dans Google Cloud Console, " +
+                            "ou ce compte Google n'est pas ajouté comme utilisateur test (Google Cloud Console → " +
+                            "Écran de consentement OAuth → Utilisateurs test) tant que l'appli n'est pas publiée en production.",
+                    )
+                }
+            },
+        )
+    }
+
     suspend fun fetchRecent(limit: Int = 10, unreadOnly: Boolean = false): Result<List<MailSummary>> =
         withContext(Dispatchers.IO) {
             runCatching {

@@ -64,6 +64,9 @@
     <!-- Comptes Google deja synchronises sur le telephone (lecture Gmail sans ecran de connexion separe, voir integrations/GoogleAuthController.kt) -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
+    <!-- Micro pour le mode vocal mains-libres en continu (voir ai/VoiceModeController.kt) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Storage (scoped storage + SAF cover most needs; legacy flag kept for <=28) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

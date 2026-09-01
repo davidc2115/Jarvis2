@@ -47,6 +47,7 @@ private fun requiredPermissions(): List<String> = buildList {
     add(Manifest.permission.READ_CONTACTS)
     add(Manifest.permission.WRITE_CONTACTS)
     add(Manifest.permission.GET_ACCOUNTS)
+    add(Manifest.permission.RECORD_AUDIO)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         add(Manifest.permission.BLUETOOTH_CONNECT)
         add(Manifest.permission.BLUETOOTH_SCAN)
@@ -104,6 +105,7 @@ private fun permissionLabel(permission: String): String = when (permission) {
     Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR -> "Agenda"
     Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS -> "Contacts"
     Manifest.permission.GET_ACCOUNTS -> "Comptes Google (Mail)"
+    Manifest.permission.RECORD_AUDIO -> "Microphone (mode vocal mains-libres)"
     Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN -> "Bluetooth"
     Manifest.permission.POST_NOTIFICATIONS -> "Notifications"
     Manifest.permission.READ_EXTERNAL_STORAGE -> "Stockage"

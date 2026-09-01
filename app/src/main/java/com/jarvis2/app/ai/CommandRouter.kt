@@ -3,6 +3,7 @@ package com.jarvis2.app.ai
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.CalendarEvent
+import com.jarvis2.app.integrations.CalendarInfo
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.MailSummary
@@ -69,6 +70,22 @@ class CommandRouter(
         const val PREF_NOTE_CONTACTS = "Preference presentation contacts"
         const val PREF_NOTE_PLANNING = "Preference presentation planning"
         const val PREF_NOTE_WEBSEARCH = "Preference presentation recherche web"
+        const val PREF_NOTE_CONTACT_FICHE = "Preference presentation fiche contact"
+        const val PREF_NOTE_CALENDAR_NICKNAMES = "Surnoms calendrier"
+
+        /**
+         * Mots qui suivent "planning de"/"agenda de" mais qui designent une
+         * PERIODE (deja geree par resolvePeriod) et non un calendrier/une
+         * personne -- sert a eviter de chercher un calendrier nomme "demain"
+         * ou "la" (mot vide francais) dans extractCalendarNameQuery().
+         */
+        val PERIOD_OR_STOPWORDS = setOf(
+            "demain", "aujourd'hui", "aujourdhui", "semaine", "mois", "soir", "matin", "midi", "minuit",
+            "après-midi", "apres-midi", "week-end", "weekend", "lundi", "mardi", "mercredi",
+            "jeudi", "vendredi", "samedi", "dimanche", "prochaine", "prochain",
+            "la", "le", "l", "les", "ce", "cette", "cet", "mon", "ma", "mes",
+            "notre", "nos", "votre", "vos", "leur", "leurs",
+        )
     }
 
     suspend fun route(rawInput: String): CommandResult {
@@ -129,6 +146,13 @@ class CommandRouter(
             },
             Matcher(Regex("""(enregistre|retiens|mémorise|memorise).*(présentation|presentation).*(recherche web|résultats? web|resultats? web).*:""")) { t ->
                 handleSavePresentationInstruction(t, PREF_NOTE_WEBSEARCH, "de la recherche web")
+            },
+            // --- Presentation des fiches contact du vault (voir renderContactFiche
+            // plus bas) : meme mecanisme que contacts/planning/recherche web --
+            // permet un format "comme le vrai Obsidian" (proprietes personnalisees,
+            // sections libres...) au lieu du format fixe par defaut.
+            Matcher(Regex("""(enregistre|retiens|mémorise|memorise).*(présentation|presentation).*(fiche).*(contact).*:""")) { t ->
+                handleSavePresentationInstruction(t, PREF_NOTE_CONTACT_FICHE, "des fiches contact")
             },
             Matcher(Regex("(allume|active).*(torche|lampe|flash)")) {
                 integrations.flashlight.setTorch(true)
@@ -202,14 +226,53 @@ class CommandRouter(
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
-            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche))""")) { t ->
+            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche))|((planning|agenda)\s+de\s+\S+)""")) { t ->
                 val period = resolvePeriod(t)
                 val limit = if (period.label == "Prochains événements") 10 else 50
-                val events = integrations.calendar.eventsInRange(period.fromMillis, period.toMillis, limit)
+                // --- Filtrage par calendrier precis ("planning de Thomas") : voir
+                // extractCalendarNameQuery/resolveCalendarFilter plus bas. nameQuery
+                // reste null pour "planning de demain"/"planning de lundi" etc (mots
+                // de periode, deja geres par resolvePeriod ci-dessus), donc aucune
+                // regression sur le comportement existant sans nom de calendrier.
+                val nameQuery = extractCalendarNameQuery(t)
+                val calendarInfo = nameQuery?.let { resolveCalendarFilter(it) }
+                val events = integrations.calendar.eventsInRange(period.fromMillis, period.toMillis, limit, calendarId = calendarInfo?.id)
+                val label = if (calendarInfo != null) "${period.label} — ${calendarInfo.displayName}" else period.label
                 if (events.isEmpty()) {
-                    CommandResult.Handled("Aucun événement trouvé (${period.label.lowercase()}).")
+                    val extra = if (nameQuery != null && calendarInfo == null) " (aucun calendrier trouvé pour « $nameQuery » — dis "liste les calendriers" pour voir les noms disponibles)" else ""
+                    CommandResult.Handled("Aucun événement trouvé (${label.lowercase()})$extra.")
                 } else {
-                    CommandResult.Handled(renderEvents(events, period.label))
+                    CommandResult.Handled(renderEvents(events, label))
+                }
+            },
+            Matcher(Regex("""(liste|montre|affiche|quels?).*calendriers?""")) {
+                val calendars = integrations.calendar.listCalendars()
+                if (calendars.isEmpty()) {
+                    CommandResult.Handled("Aucun calendrier trouvé (ou permission Agenda non accordée).")
+                } else {
+                    CommandResult.Handled(
+                        "Calendriers disponibles : " + calendars.joinToString(", ") { "${it.displayName} (${it.accountName})" },
+                    )
+                }
+            },
+            // --- Surnom de calendrier ("surnomme le calendrier Compte pro en
+            // Thomas") : permet d'utiliser "planning de Thomas" meme si le vrai
+            // nom du calendrier (compte Google, calendrier partage...) est
+            // different -- stocke dans une note dediee du vault, meme mecanisme
+            // que les preferences de presentation.
+            Matcher(Regex("""(surnomme|renomme|appelle) le calendrier .+ (en|comme) .+""")) { t ->
+                val m = Regex("""calendrier\s+(.+?)\s+(?:en|comme)\s+(.+)""").find(t)
+                if (m == null) {
+                    CommandResult.Handled("Précise, par exemple : « surnomme le calendrier Compte pro en Thomas ».")
+                } else {
+                    val realName = m.groupValues[1].trim()
+                    val nickname = m.groupValues[2].trim()
+                    if (realName.isBlank() || nickname.isBlank()) {
+                        CommandResult.Handled("Précise, par exemple : « surnomme le calendrier Compte pro en Thomas ».")
+                    } else {
+                        saveCalendarNickname(nickname, realName)
+                        CommandResult.Handled("Le calendrier « $realName » peut maintenant être demandé sous le nom « $nickname ».")
+                    }
                 }
             },
             // --- Fiche contact dans le vault (dossier Contacts/) : place AVANT le
@@ -232,9 +295,8 @@ class CommandRouter(
                         )
                         else -> {
                             val c = matches.first()
-                            val body = vault.autoLink(formatContactFicheBody(c), excludeTitle = c.name)
                             vault.createFolder("Contacts")
-                            val note = vault.createNote(c.name, body = body, tags = setOf("contact"), folderPath = "Contacts")
+                            val note = createContactFicheNote(c)
                             CommandResult.Handled("Fiche « ${note.title} » créée dans le vault (dossier Contacts).")
                         }
                     }
@@ -316,17 +378,28 @@ class CommandRouter(
                 if (file == null) CommandResult.Handled("Position GPS indisponible, impossible de générer le KML.")
                 else CommandResult.Handled("Fichier KML généré: ${file.name}.")
             },
+            // --- Diagnostic mail : place AVANT le matcher generique "lis les
+            // mails" -- expose la VRAIE cause de l'echec (voir MailReader.diagnosticStatus)
+            // au lieu du message generique "Aucun compte Google connecte" qui
+            // masquait toutes les autres causes possibles (app non enregistree/
+            // verifiee cote Google Cloud Console, compte non ajoute comme testeur,
+            // erreur reseau, etc.) sous le meme texte trompeur.
+            Matcher(Regex("""(diagnostic|statut|status).*(mail|gmail)""")) {
+                CommandResult.Handled(integrations.mailReader.diagnosticStatus())
+            },
             Matcher(Regex("""(lis|montre|affiche).*mails?|(derniers?|nouveaux?) mails?|mails? non lus?""")) { t ->
-                if (!integrations.mailReader.isConfigured()) {
-                    CommandResult.Handled("Aucun compte Google connecté. Va dans Réglages → Mail (Google) pour te connecter.")
-                } else {
-                    val unreadOnly = Regex("non lus?").containsMatchIn(t)
-                    val result = integrations.mailReader.fetchRecent(limit = 10, unreadOnly = unreadOnly)
-                    result.fold(
-                        onSuccess = { mails -> CommandResult.Handled(formatMails(mails)) },
-                        onFailure = { e -> CommandResult.Handled("Impossible de lire les mails : ${e.message}") },
-                    )
-                }
+                // Ancien comportement : un pre-check isConfigured() affichait un
+                // message generique "Aucun compte Google connecte" des qu'un
+                // jeton echouait pour N'IMPORTE QUELLE raison, masquant la vraie
+                // cause (par ex. "unregistered on API console", 403 access_denied,
+                // erreur reseau...). On appelle directement fetchRecent() et on
+                // affiche le message d'erreur reel remonte par GoogleAuthController.
+                val unreadOnly = Regex("non lus?").containsMatchIn(t)
+                val result = integrations.mailReader.fetchRecent(limit = 10, unreadOnly = unreadOnly)
+                result.fold(
+                    onSuccess = { mails -> CommandResult.Handled(formatMails(mails)) },
+                    onFailure = { e -> CommandResult.Handled(formatMailError(e)) },
+                )
             },
             Matcher(Regex("(envoie|rédige|compose).*mail")) { t ->
                 val subject = extractAfter(t, listOf("mail", "email", "courriel")) ?: "Message depuis Jarvis"
@@ -567,17 +640,93 @@ class CommandRouter(
      * presentation utile ici (expediteur + objet + court extrait).
      */
     /**
-     * Corps markdown d'une fiche contact enregistree dans le vault (dossier
-     * Contacts/, voir le matcher "fiche contact" plus haut) -- uniquement
-     * des vraies donnees du telephone, jamais rien d'invente, meme logique
-     * de prudence que formatSingleContact.
+     * Corps markdown PAR DEFAUT d'une fiche contact enregistree dans le vault
+     * (dossier Contacts/, voir le matcher "fiche contact" plus haut) --
+     * uniquement des vraies donnees du telephone, jamais rien d'invente, meme
+     * logique de prudence que formatSingleContact. Sections a la maniere d'un
+     * vrai fichier Obsidian (proprietes en frontmatter -- voir
+     * createContactFicheNote -- + sections de corps libres avec emoji, comme
+     * l'ancienne appli avant la reecriture #182). Ce format n'est utilise que
+     * si l'utilisateur n'a enregistre aucune presentation personnalisee (voir
+     * renderContactFiche / PREF_NOTE_CONTACT_FICHE).
      */
     private fun formatContactFicheBody(c: Contact): String = buildString {
         appendLine("# ${c.name}")
         appendLine()
-        appendLine("- Telephone : ${c.phone?.takeIf { it.isNotBlank() } ?: "non renseigne"}")
-        appendLine("- Email : ${c.email?.takeIf { it.isNotBlank() } ?: "non renseigne"}")
+        appendLine("## ☎️ Coordonnées")
+        appendLine("- **Téléphone** : ${c.phone?.takeIf { it.isNotBlank() } ?: "non renseigné"}")
+        appendLine("- **Email** : ${c.email?.takeIf { it.isNotBlank() } ?: "non renseigné"}")
+        appendLine()
+        appendLine("## 📝 Notes")
+        appendLine()
     }.trim()
+
+    /**
+     * Presentation de la fiche contact : meme mecanisme que renderContacts/
+     * renderEvents (voir PREF_NOTE_CONTACT_FICHE) -- si l'utilisateur a
+     * enregistre une presentation personnalisee ("enregistre la presentation
+     * des fiches contact : ..."), le corps est redige par le moteur IA local
+     * selon cette instruction ; sinon, format par defaut riche (voir
+     * [formatContactFicheBody]) plutot qu'un format impose et non
+     * personnalisable comme avant.
+     */
+    private suspend fun renderContactFiche(c: Contact): String {
+        val instruction = getPresentationInstruction(PREF_NOTE_CONTACT_FICHE)
+            ?: return formatContactFicheBody(c)
+        val raw = buildString {
+            appendLine("Nom : ${c.name}")
+            appendLine("Téléphone : ${c.phone?.takeIf { it.isNotBlank() } ?: "non renseigné"}")
+            appendLine("Email : ${c.email?.takeIf { it.isNotBlank() } ?: "non renseigné"}")
+        }
+        return renderWithLlm(raw, instruction) { formatContactFicheBody(c) }
+    }
+
+    /**
+     * Cree (ou remplace) la note de fiche contact dans le vault, avec de
+     * VRAIES proprietes en frontmatter YAML (tags, telephone, email) --
+     * "comme le vrai Obsidian" : ces proprietes apparaissent dans le panneau
+     * "Properties" natif d'Obsidian si le vault est synchronise avec l'appli
+     * desktop/mobile (voir obsidian/NoteParser.kt : rendu frontmatter deja
+     * byte-for-byte compatible), pas juste un tag "contact" comme avant.
+     */
+    private suspend fun createContactFicheNote(c: Contact): Note {
+        val body = vault.autoLink(renderContactFiche(c), excludeTitle = c.name)
+        val frontmatter = buildMap {
+            put("tags", "contact")
+            c.phone?.takeIf { it.isNotBlank() }?.let { put("telephone", it) }
+            c.email?.takeIf { it.isNotBlank() }?.let { put("email", it) }
+        }
+        val fileName = "${c.name.replace(Regex("[\\/:*?\"<>|]"), "-")}.md"
+        val note = Note(
+            fileName = fileName,
+            title = c.name,
+            body = body,
+            frontmatter = frontmatter,
+            tags = setOf("contact"),
+            links = emptySet(),
+            folderPath = "Contacts",
+        )
+        vault.saveNote(note)
+        return note
+    }
+
+    /**
+     * Message d'erreur mail contextuel : ajoute une piste concrete quand le
+     * message brut (voir GoogleAuthController.kt) laisse penser a un probleme
+     * de configuration Google Cloud Console plutot qu'a une absence de compte
+     * -- c'est la cause la plus frequente et la plus difficile a diagnostiquer
+     * sans indice, car elle donne un message d'erreur variable selon le cas
+     * (app non verifiee, compte non ajoute comme testeur, API non activee...).
+     */
+    private fun formatMailError(e: Throwable): String = buildString {
+        append("Impossible de lire les mails : ${e.message ?: e::class.simpleName ?: "erreur inconnue"}")
+        val lower = (e.message ?: "").lowercase()
+        val looksLikeConsoleIssue = listOf("unregistered", "not registered", "access_denied", "403", "invalid_client", "unauthorized")
+            .any { lower.contains(it) }
+        if (looksLikeConsoleIssue) {
+            append(". Cause probable : le client OAuth Android (package com.jarvis2.app.debug + SHA-1 du debug.keystore) n'est pas correctement enregistre dans Google Cloud Console, ou ton compte n'est pas ajoute comme utilisateur test tant que l'appli n'est pas publiee (Ecran de consentement OAuth -> Utilisateurs test). Dis "diagnostic mail" pour plus de details.")
+        }
+    }
 
     private fun formatMails(mails: List<MailSummary>): String {
         if (mails.isEmpty()) return "Aucun mail à afficher."
@@ -606,8 +755,11 @@ class CommandRouter(
      * generique "Planning :" quand une periode precise a ete demandee.
      */
     private fun formatEvents(events: List<CalendarEvent>, groupByDay: Boolean, label: String = "Planning"): String {
+        // Nom du calendrier d'origine (voir CalendarEvent.calendarName) affiche
+        // entre parentheses -- l'utilisateur ne le voyait jamais avant, alors
+        // qu'un planning multi-comptes (perso/pro/partages) est ambigu sans ca.
         if (!groupByDay) {
-            return "$label : " + events.joinToString(" ; ") { it.title }
+            return "$label : " + events.joinToString(" ; ") { "${it.title} (${it.calendarName})" }
         }
 
         val zone = java.time.ZoneId.systemDefault()
@@ -623,7 +775,7 @@ class CommandRouter(
                 appendLine("📅 $dayLabel")
                 dayEvents.forEach { e ->
                     val time = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone).toLocalTime().format(timeFmt)
-                    appendLine("  • $time — ${e.title}")
+                    appendLine("  • $time — ${e.title} (${e.calendarName})")
                 }
             }
         }.trim()
@@ -711,7 +863,7 @@ class CommandRouter(
         val zone = java.time.ZoneId.systemDefault()
         val raw = events.joinToString("\n") { e ->
             val dt = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone)
-            "- ${dt.toLocalDate()} ${dt.toLocalTime()} : ${e.title}"
+            "- ${dt.toLocalDate()} ${dt.toLocalTime()} : ${e.title} [calendrier: ${e.calendarName}]"
         }
         return renderWithLlm("$label (${events.size} événement(s)) :\n$raw", instruction) { formatEvents(events, groupByDay = true, label = label) }
     }
@@ -737,6 +889,65 @@ class CommandRouter(
         ) {
             "Résultats web pour « $query » :\n" + extracts.joinToString("\n") { "• ${it.title} — ${it.url}" }
         }
+    }
+
+    /**
+     * Extrait un nom de calendrier/personne depuis "planning de X" / "agenda
+     * de X" -- renvoie null si X est un mot de periode ou un mot vide
+     * francais (voir PERIOD_OR_STOPWORDS), auquel cas c'est resolvePeriod()
+     * qui gere deja la phrase entierement (pas de calendrier precis demande).
+     */
+    private fun extractCalendarNameQuery(t: String): String? {
+        val match = Regex("""(?:planning|agenda)\s+de\s+(\S+)""").find(t) ?: return null
+        val candidate = match.groupValues[1].trim().trim(',', '.', '?', '!')
+        if (candidate.isBlank() || PERIOD_OR_STOPWORDS.contains(candidate)) return null
+        return candidate
+    }
+
+    /**
+     * Resout un nom/surnom saisi par l'utilisateur vers un vrai calendrier du
+     * telephone : d'abord via les surnoms enregistres (voir
+     * [loadCalendarNicknames]), puis par correspondance partielle sur le nom
+     * d'affichage ou le compte du calendrier. Renvoie null si rien ne
+     * correspond (l'appelant retombe alors sur "tous calendriers confondus"
+     * et signale qu'aucun calendrier n'a ete trouve pour ce nom).
+     */
+    private suspend fun resolveCalendarFilter(nameQuery: String): CalendarInfo? {
+        val calendars = integrations.calendar.listCalendars()
+        if (calendars.isEmpty()) return null
+        val nicknames = loadCalendarNicknames()
+        val resolvedName = nicknames[nameQuery.lowercase()] ?: nameQuery
+        return calendars.firstOrNull {
+            it.displayName.contains(resolvedName, ignoreCase = true) || it.accountName.contains(resolvedName, ignoreCase = true)
+        }
+    }
+
+    /** Surnoms de calendrier enregistres (voir le matcher "surnomme le calendrier ... en ..."), sous forme surnom (minuscule) -> vrai nom. */
+    private suspend fun loadCalendarNicknames(): Map<String, String> {
+        val body = vault.findByTitleOrFileName(PREF_NOTE_CALENDAR_NICKNAMES)?.body ?: return emptyMap()
+        return body.lines().mapNotNull { line ->
+            val idx = line.indexOf("=>")
+            if (idx < 0) return@mapNotNull null
+            val nickname = line.substring(0, idx).trim().lowercase()
+            val real = line.substring(idx + 2).trim()
+            if (nickname.isBlank() || real.isBlank()) null else nickname to real
+        }.toMap()
+    }
+
+    private suspend fun saveCalendarNickname(nickname: String, realName: String) {
+        val existing = vault.findByTitleOrFileName(PREF_NOTE_CALENDAR_NICKNAMES)
+        val lines = existing?.body?.lines()?.filter { it.isNotBlank() }?.toMutableList() ?: mutableListOf()
+        lines.removeAll { it.substringBefore("=>").trim().equals(nickname, ignoreCase = true) }
+        lines.add("$nickname => $realName")
+        val note = Note(
+            fileName = existing?.fileName ?: "${PREF_NOTE_CALENDAR_NICKNAMES.replace(Regex("[\\/:*?\"<>|]"), "-")}.md",
+            title = PREF_NOTE_CALENDAR_NICKNAMES,
+            body = lines.joinToString("\n"),
+            frontmatter = existing?.frontmatter ?: emptyMap(),
+            tags = existing?.tags ?: emptySet(),
+            links = existing?.links ?: emptySet(),
+        )
+        vault.saveNote(note)
     }
 
     /** Plage de dates resolue depuis une phrase (voir [resolvePeriod]). */
@@ -774,8 +985,8 @@ class CommandRouter(
 
         return when {
             Regex("après.?demain|apres.?demain").containsMatchIn(t) -> ofDay(today.plusDays(2), "Après-demain")
-            Regex("\bdemain\b").containsMatchIn(t) -> ofDay(today.plusDays(1), "Demain")
-            Regex("\baujourd'?hui\b").containsMatchIn(t) -> ofDay(today, "Aujourd'hui")
+            Regex("""\bdemain\b""").containsMatchIn(t) -> ofDay(today.plusDays(1), "Demain")
+            Regex("""\baujourd'?hui\b""").containsMatchIn(t) -> ofDay(today, "Aujourd'hui")
             Regex("ce soir").containsMatchIn(t) -> ofTimeWindow(18, 24, "Ce soir")
             Regex("cet? après.?midi|cet? apres.?midi").containsMatchIn(t) -> ofTimeWindow(12, 18, "Cet après-midi")
             Regex("ce matin").containsMatchIn(t) -> ofTimeWindow(0, 12, "Ce matin")

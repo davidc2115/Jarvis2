@@ -17,7 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.Turn
+import com.jarvis2.app.ai.VoiceState
 import com.jarvis2.app.ui.theme.BubbleStyle
 import com.jarvis2.app.ui.theme.JarvisCyan
 import com.jarvis2.app.ui.theme.JarvisGold
@@ -111,6 +114,15 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 }
             }
 
+            state.voiceModeError?.let { error ->
+                Surface(color = JarvisSurfaceRaised, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(error, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        TextButton(onClick = { viewModel.dismissVoiceModeError() }) { Text("OK") }
+                    }
+                }
+            }
+
             state.pendingWebSearchQuery?.let { query ->
                 Surface(color = JarvisSurfaceRaised, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,6 +162,19 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                     }
                 }) {
                     Icon(Icons.Filled.Mic, contentDescription = "Dicter", tint = JarvisGold)
+                }
+                // --- Mode vocal mains-libres (voir ai/VoiceModeController.kt) :
+                // contrairement au bouton "Dicter" ci-dessus (un aller-retour),
+                // ce bouton bascule une ecoute EN CONTINU avec coupure de
+                // parole automatique -- reste actif tant qu'on ne rappuie pas
+                // dessus. L'icone/couleur reflete l'etat courant.
+                IconButton(onClick = { viewModel.toggleVoiceMode() }) {
+                    val (icon, tint, description) = when (state.voiceState) {
+                        VoiceState.OFF -> Triple(Icons.Filled.RecordVoiceOver, JarvisCyan, "Activer le mode vocal mains-libres")
+                        VoiceState.LISTENING -> Triple(Icons.Filled.Stop, JarvisGold, "Mode vocal actif : écoute (appuyer pour arrêter)")
+                        VoiceState.SPEAKING -> Triple(Icons.Filled.Stop, JarvisGold, "Mode vocal actif : Jarvis parle (appuyer pour arrêter)")
+                    }
+                    Icon(icon, contentDescription = description, tint = tint)
                 }
                 IconButton(onClick = {
                     if (input.isNotBlank()) {

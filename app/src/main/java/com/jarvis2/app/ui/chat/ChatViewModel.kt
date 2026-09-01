@@ -9,6 +9,8 @@ import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.TtsController
 import com.jarvis2.app.ai.Turn
+import com.jarvis2.app.ai.VoiceModeController
+import com.jarvis2.app.ai.VoiceState
 import com.jarvis2.app.ai.WebSearchTool
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.ui.settings.TTS_ENABLED
@@ -32,6 +34,10 @@ data class ChatUiState(
     val bubbleShape: String = "rounded",
     val bubbleUserColor: String = "gold",
     val bubbleAssistantColor: String = "cyan",
+    // Mode vocal mains-libres (voir ai/VoiceModeController.kt) : OFF tant que
+    // l'utilisateur n'a pas explicitement appuye sur le bouton dedie.
+    val voiceState: VoiceState = VoiceState.OFF,
+    val voiceModeError: String? = null,
 )
 
 class ChatViewModel(
@@ -42,12 +48,20 @@ class ChatViewModel(
     private val webSearchTool: WebSearchTool,
     private val settings: SettingsDataStore,
     private val tts: TtsController,
+    private val voiceMode: VoiceModeController,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     init {
+        // Mode vocal mains-libres : le texte reconnu par VoiceModeController
+        // (ecoute en continu, coupure de parole -- voir ai/VoiceModeController.kt)
+        // est envoye exactement comme un message tape au clavier.
+        voiceMode.onFinalSpeech = { text -> sendMessage(text) }
+        viewModelScope.launch {
+            voiceMode.state.collect { vs -> _state.value = _state.value.copy(voiceState = vs) }
+        }
         viewModelScope.launch {
             val info = engineManager.ensureReady()
             _state.value = _state.value.copy(engine = info)
@@ -136,6 +150,35 @@ class ChatViewModel(
     }
 
     /**
+     * Bascule le mode vocal mains-libres (voir ai/VoiceModeController.kt) :
+     * demarre une ecoute en continu (avec coupure de parole automatique) si
+     * le mode etait eteint, ou l'arrete completement sinon. Si la permission
+     * micro manque ou qu'aucun moteur de reconnaissance vocale n'est
+     * disponible sur l'appareil, un message d'erreur est affiche dans le
+     * chat plutot que d'echouer silencieusement.
+     */
+    fun toggleVoiceMode() {
+        if (_state.value.voiceState != VoiceState.OFF) {
+            voiceMode.stop()
+            return
+        }
+        val started = voiceMode.start()
+        if (!started) {
+            _state.value = _state.value.copy(
+                voiceModeError = if (!voiceMode.hasMicPermission()) {
+                    "Permission microphone requise pour le mode vocal mains-libres."
+                } else {
+                    "Aucun moteur de reconnaissance vocale disponible sur cet appareil."
+                },
+            )
+        }
+    }
+
+    fun dismissVoiceModeError() {
+        _state.value = _state.value.copy(voiceModeError = null)
+    }
+
+    /**
      * L'unique exception explicite et opt-in a "100% local" (voir WebSearchTool) :
      * declenchee seulement ici, sur confirmation explicite de l'utilisateur dans le
      * chat (bouton "Rechercher" apres que le modele ait admis ne pas savoir) --
@@ -197,6 +240,7 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        voiceMode.stop()
         tts.release()
         super.onCleared()
     }
