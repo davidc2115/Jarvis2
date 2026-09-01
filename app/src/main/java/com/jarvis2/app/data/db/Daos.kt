@@ -28,6 +28,17 @@ interface MemoryDao {
     @Query("SELECT * FROM memory ORDER BY timestamp DESC")
     fun observeAll(): Flow<List<MemoryEntity>>
 
+    /**
+     * Comme [observeAll] mais borne au nombre de lignes -- utilise par
+     * MemoryStore.relevant() pour le calcul TF-IDF (voir sa doc de classe) :
+     * sans cette borne, ce calcul relit et rescore TOUTE la table a chaque
+     * message, un cout qui grandit sans fin au fil des mois d'utilisation
+     * et contribue directement aux lenteurs "par moment" remontees par
+     * l'utilisateur (plus severe a mesure que la memoire s'accumule).
+     */
+    @Query("SELECT * FROM memory ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<MemoryEntity>
+
     @Query("DELETE FROM memory WHERE id = :id")
     suspend fun delete(id: Long)
 }

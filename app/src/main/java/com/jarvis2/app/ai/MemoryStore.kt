@@ -2,7 +2,6 @@ package com.jarvis2.app.ai
 
 import com.jarvis2.app.data.db.MemoryDao
 import com.jarvis2.app.data.db.MemoryEntity
-import kotlinx.coroutines.flow.first
 import kotlin.math.ln
 
 /**
@@ -22,12 +21,32 @@ import kotlin.math.ln
  */
 class MemoryStore(private val memoryDao: MemoryDao) {
 
+    private companion object {
+        /**
+         * Longueur max d'un souvenir stocke. Sans cette borne, un souvenir issu
+         * d'une commande "planning"/"contacts"/"mails" (voir ChatViewModel.
+         * sendMessage) stockait le TEXTE COMPLET affiche dans le chat -- un
+         * planning de plusieurs semaines groupe par jour peut faire plusieurs
+         * milliers de caracteres, alors que ce sont des donnees live (deja
+         * re-interrogees a chaque demande) qui n'ont pas besoin d'etre
+         * integralement retrouvables par recherche TF-IDF. Les 300 premiers
+         * caracteres suffisent a retrouver le contexte ("j'ai demande mon
+         * planning de la semaine -> ...") sans faire gonfler indefiniment la
+         * table memory (voir aussi MemoryDao.recent, meme motivation).
+         */
+        const val MAX_REMEMBERED_LENGTH = 300
+
+        /** Nombre de souvenirs recents scannes pour le calcul TF-IDF (voir MemoryDao.recent). */
+        const val MAX_SCANNED_MEMORIES = 300
+    }
+
     suspend fun remember(text: String, source: String) {
-        memoryDao.insert(MemoryEntity(text = text, source = source, timestamp = System.currentTimeMillis()))
+        val capped = text.take(MAX_REMEMBERED_LENGTH)
+        memoryDao.insert(MemoryEntity(text = capped, source = source, timestamp = System.currentTimeMillis()))
     }
 
     suspend fun relevant(query: String, limit: Int = 5): List<MemoryEntity> {
-        val all = memoryDao.observeAll().first()
+        val all = memoryDao.recent(MAX_SCANNED_MEMORIES)
         if (all.isEmpty()) return emptyList()
 
         val queryTerms = tokenize(query)

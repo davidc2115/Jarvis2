@@ -231,7 +231,15 @@ class CommandRouter(
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
             },
-            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|avant.?hier|hier|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}/\d{1,2}|dans\s+\d+\s+jours?))|((planning|agenda)\s+de\s+\S+)""")) { t ->
+            // Le 3e groupe ("j'ai quoi"/"je fais quoi"/...) couvre les phrases qui
+            // demandent le planning SANS jamais dire le mot "planning"/"agenda" --
+            // avant cet ajout, "j'ai quoi demain ?" ne matchait aucun matcher et
+            // tombait tout droit dans la conversation LLM generale, ou le petit
+            // modele local (CPU, voir gpuLayers=0) n'a de toute facon PAS acces au
+            // vrai contenu de l'agenda et ne peut qu'inventer une reponse -- exactement
+            // le symptome "les infos donnees ne sont pas correctes" remonte par
+            // l'utilisateur, mais applique au planning plutot qu'a la recherche web.
+            Matcher(Regex("""((mes?|mon|montre|affiche).*(prochains? événements?|prochains? rendez-vous|planning|agenda))|((planning|agenda).*(aujourd'?hui|demain|après.?demain|apres.?demain|avant.?hier|hier|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}/\d{1,2}|dans\s+\d+\s+jours?))|((planning|agenda)\s+de\s+\S+)|((j'ai quoi|je fais quoi|qu'est-ce que j'ai|qu'est ce que j'ai|qu'est-ce que je fais|qu'est ce que je fais|je suis pris|je suis occupé|je suis occupe|suis-je pris|suis je pris).*(aujourd'?hui|demain|après.?demain|apres.?demain|avant.?hier|hier|cette semaine|semaine prochaine|ce mois|mois prochain|ce soir|ce matin|après.?midi|apres.?midi|week-?end|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}/\d{1,2}))""")) { t ->
                 val period = resolvePeriod(t)
                 val limit = if (period.label == "Prochains événements") 10 else 50
                 // --- Filtrage par calendrier precis ("planning de Thomas") : voir
@@ -277,6 +285,48 @@ class CommandRouter(
                     } else {
                         saveCalendarNickname(nickname, realName)
                         CommandResult.Handled("Le calendrier « $realName » peut maintenant être demandé sous le nom « $nickname ».")
+                    }
+                }
+            },
+            // --- LECTURE d'une fiche contact deja existante dans le vault (dossier
+            // Contacts/) : place AVANT le matcher de CREATION juste en dessous, car
+            // les verbes ("affiche"/"montre"/...) sont disjoints de ceux de creation
+            // ("crée"/"ajoute"/...) mais l'ordre reste important par principe. Sans ce
+            // matcher, "montre la fiche contact de Marie" tombait dans la conversation
+            // LLM generale -- le petit modele local n'a pas acces au vault et ne peut
+            // qu'inventer un contenu plausible. Si la fiche n'existe pas encore, elle
+            // est creee a la volee depuis le contact telephone reel (meme logique que
+            // le matcher de creation), pour ne jamais repondre "je ne sais pas" alors
+            // que le contact existe bel et bien sur le telephone.
+            Matcher(Regex("(affiche|montre|donne|voir|vois|lis|ouvre|as-tu|as tu).*(fiche).*(contact)")) { t ->
+                val name = extractAfter(
+                    t,
+                    listOf("fiche contact pour", "fiche contact de", "fiche de contact pour", "fiche de contact de", "fiche pour", "fiche de"),
+                )
+                if (name == null) {
+                    CommandResult.Handled("Précise pour qui, par exemple « montre la fiche contact de Marie ».")
+                } else {
+                    val existingNotes = vault.listNotes().filter { it.folderPath == "Contacts" && it.title.contains(name, ignoreCase = true) }
+                    when {
+                        existingNotes.size == 1 -> CommandResult.Handled(existingNotes.first().body)
+                        existingNotes.size > 1 -> CommandResult.Handled(
+                            "Plusieurs fiches correspondent à « $name » : " + existingNotes.joinToString(", ") { it.title } + ". Précise laquelle.",
+                        )
+                        else -> {
+                            val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(name, ignoreCase = true) }
+                            when {
+                                matches.isEmpty() -> CommandResult.Handled("Aucune fiche ni contact trouvé pour « $name ».")
+                                matches.size > 1 -> CommandResult.Handled(
+                                    "Plusieurs contacts correspondent à « $name » : " + matches.joinToString(", ") { it.name } + ". Précise lequel.",
+                                )
+                                else -> {
+                                    val c = matches.first()
+                                    vault.createFolder("Contacts")
+                                    val note = createContactFicheNote(c)
+                                    CommandResult.Handled(note.body)
+                                }
+                            }
+                        }
                     }
                 }
             },
