@@ -1090,7 +1090,7 @@ class CommandRouter(
             // litteralement infinie) -- toute autre formulation ambigue de
             // "planning"/"agenda" retombe sur AUJOURD'HUI, jamais un dump
             // multi-jours (voir le commentaire de la fonction ci-dessus).
-            Regex("prochains?\s+(é|e)v(é|e)nements?|prochains?\s+rendez-?vous|[aà]\s+venir|suivants?").containsMatchIn(t) ->
+            Regex("""prochains?\s+(é|e)v(é|e)nements?|prochains?\s+rendez-?vous|[aà]\s+venir|suivants?""").containsMatchIn(t) ->
                 DateRange(now.toInstant().toEpochMilli(), today.plusDays(30).atStartOfDay(zone).toInstant().toEpochMilli(), "Prochains événements")
             else -> ofDay(today, "Aujourd'hui")
         }
