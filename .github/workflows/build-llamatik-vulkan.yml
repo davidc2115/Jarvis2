@@ -96,7 +96,13 @@ jobs:
         # compilation croisee. BOTH autorise la recherche a la fois dans le sysroot NDK et
         # dans les chemins systeme standards, sans quoi le configure CMake echoue avec
         # "Could not find a package configuration file provided by SPIRV-Headers".
-        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH" --stacktrace
+        # INCLUDE=BOTH et LIBRARY=BOTH sont necessaires en plus : find_package(Vulkan)
+        # est en mode MODULE (FindVulkan.cmake fourni par CMake, pas un Config package),
+        # donc pas couvert par PACKAGE=BOTH -- il utilise find_path/find_library, restes
+        # a ONLY (sysroot NDK) par defaut. Le NDK fournit vulkan/vulkan.h (API C) mais pas
+        # vulkan/vulkan.hpp (bindings C++ que ggml-vulkan.cpp inclut), qui vient du SDK
+        # Vulkan hote -- d'ou "fatal error: vulkan/vulkan.hpp file not found" sans ce flag.
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH" --stacktrace
 
       - name: Locate the built AAR
         id: locate
