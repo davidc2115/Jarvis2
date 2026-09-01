@@ -239,7 +239,7 @@ class CommandRouter(
                 val events = integrations.calendar.eventsInRange(period.fromMillis, period.toMillis, limit, calendarId = calendarInfo?.id)
                 val label = if (calendarInfo != null) "${period.label} — ${calendarInfo.displayName}" else period.label
                 if (events.isEmpty()) {
-                    val extra = if (nameQuery != null && calendarInfo == null) " (aucun calendrier trouvé pour « $nameQuery » — dis "liste les calendriers" pour voir les noms disponibles)" else ""
+                    val extra = if (nameQuery != null && calendarInfo == null) " (aucun calendrier trouvé pour « $nameQuery » — dis \"liste les calendriers\" pour voir les noms disponibles)" else ""
                     CommandResult.Handled("Aucun événement trouvé (${label.lowercase()})$extra.")
                 } else {
                     CommandResult.Handled(renderEvents(events, label))
@@ -724,7 +724,7 @@ class CommandRouter(
         val looksLikeConsoleIssue = listOf("unregistered", "not registered", "access_denied", "403", "invalid_client", "unauthorized")
             .any { lower.contains(it) }
         if (looksLikeConsoleIssue) {
-            append(". Cause probable : le client OAuth Android (package com.jarvis2.app.debug + SHA-1 du debug.keystore) n'est pas correctement enregistre dans Google Cloud Console, ou ton compte n'est pas ajoute comme utilisateur test tant que l'appli n'est pas publiee (Ecran de consentement OAuth -> Utilisateurs test). Dis "diagnostic mail" pour plus de details.")
+            append(". Cause probable : le client OAuth Android (package com.jarvis2.app.debug + SHA-1 du debug.keystore) n'est pas correctement enregistre dans Google Cloud Console, ou ton compte n'est pas ajoute comme utilisateur test tant que l'appli n'est pas publiee (Ecran de consentement OAuth -> Utilisateurs test). Dis \"diagnostic mail\" pour plus de details.")
         }
     }
 
