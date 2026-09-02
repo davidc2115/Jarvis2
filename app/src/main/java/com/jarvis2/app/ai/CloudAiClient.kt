@@ -1,6 +1,7 @@
 package com.jarvis2.app.ai
 
 import android.content.Context
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.jarvis2.app.data.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
@@ -13,11 +14,51 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Clé API Groq (console.groq.com, gratuite, sans carte bancaire). */
+/** Ancienne clé Groq unique (retrocompat/migration -- voir [loadGroqApiKeys]). */
 val GROQ_API_KEY = stringPreferencesKey("groq_api_key")
+
+/**
+ * Clés API Groq -- MULTIPLES (task : "met en place le multi cles Groq"), stockees
+ * en JSON array. Plusieurs cles gratuites (comptes console.groq.com distincts)
+ * permettent de dépasser le quota gratuit journalier d'un seul compte : à
+ * chaque envoi, [CloudAiClient.send] tourne sur la clé suivante (round-robin,
+ * voir [GROQ_KEY_INDEX]) et, si elle échoue (quota atteint, invalide...),
+ * essaie automatiquement les autres avant de basculer sur Gemini cloud.
+ */
+val GROQ_API_KEYS = stringPreferencesKey("groq_api_keys")
+
+/** Index de rotation round-robin entre les clés Groq (voir [GROQ_API_KEYS]). */
+val GROQ_KEY_INDEX = intPreferencesKey("groq_key_index")
 
 /** Clé API Gemini cloud (aistudio.google.com, gratuite) -- distincte de Gemini Nano/AICore (on-device). */
 val GEMINI_CLOUD_API_KEY = stringPreferencesKey("gemini_cloud_api_key")
+
+/**
+ * Lit la liste des clés Groq configurées (voir [GROQ_API_KEYS]), avec migration
+ * douce depuis l'ancien champ unique [GROQ_API_KEY] si la liste n'existe pas
+ * encore (aucune perte de clé pour les utilisateurs ayant déjà configuré
+ * Jarvis avant l'ajout du multi-clés).
+ */
+suspend fun loadGroqApiKeys(settings: SettingsDataStore): List<String> {
+    val json = settings.get(GROQ_API_KEYS)
+    if (json != null) {
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }.filter { it.isNotBlank() }
+        }.getOrDefault(emptyList())
+    }
+    val legacy = settings.get(GROQ_API_KEY)
+    return if (!legacy.isNullOrBlank()) listOf(legacy) else emptyList()
+}
+
+/** Sauvegarde la liste complete des clés Groq (voir [GROQ_API_KEYS]) ; retire l'ancien champ unique. */
+suspend fun saveGroqApiKeys(settings: SettingsDataStore, keys: List<String>) {
+    val cleaned = keys.map { it.trim() }.filter { it.isNotBlank() }
+    val arr = JSONArray()
+    cleaned.forEach { arr.put(it) }
+    settings.set(GROQ_API_KEYS, arr.toString())
+    settings.remove(GROQ_API_KEY)
+}
 
 /**
  * Cascade IA cloud 100% gratuite (task #313) : suite au retour explicite de
@@ -54,28 +95,51 @@ class CloudAiClient(
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
     suspend fun isConfigured(): Boolean =
-        !settings.get(GROQ_API_KEY).isNullOrBlank() || !settings.get(GEMINI_CLOUD_API_KEY).isNullOrBlank()
+        loadGroqApiKeys(settings).isNotEmpty() || !settings.get(GEMINI_CLOUD_API_KEY).isNullOrBlank()
 
     /**
-     * Envoie [systemPrompt] + [history] + [userText] à Groq, puis à Gemini
-     * cloud en repli si Groq échoue ou n'est pas configuré. [history] est
-     * volontairement borné (voir takeLast) : pas besoin d'un historique
-     * complet pour comprendre une demande d'action, et ça limite la
-     * consommation de tokens côté free tier.
+     * Envoie [systemPrompt] + [history] + [userText] à Groq (en tournant sur
+     * toutes les clés configurées -- voir [loadGroqApiKeys] -- round-robin +
+     * failover automatique si l'une d'elles est en échec/quota atteint),
+     * puis à Gemini cloud en repli si aucune clé Groq n'a fonctionné ou n'est
+     * configurée. [history] est volontairement borné (voir takeLast) : pas
+     * besoin d'un historique complet pour comprendre une demande d'action,
+     * et ça limite la consommation de tokens côté free tier.
      */
     suspend fun send(systemPrompt: String, history: List<Turn>, userText: String): Result<String> =
         withContext(Dispatchers.IO) {
-            val groqKey = settings.get(GROQ_API_KEY)
-            if (!groqKey.isNullOrBlank()) {
-                val r = runCatching { sendGroq(groqKey, systemPrompt, history, userText) }
-                if (r.isSuccess) return@withContext r
+            val groqKeys = loadGroqApiKeys(settings)
+            var lastError: Throwable? = null
+            if (groqKeys.isNotEmpty()) {
+                // Round-robin : commence a la clé suivant celle utilisee au
+                // dernier appel, pour repartir la charge/quota entre toutes
+                // les clés au fil des conversations plutot que de toujours
+                // taper la premiere jusqu'a epuisement de son quota.
+                val startIndex = (settings.get(GROQ_KEY_INDEX) ?: 0).mod(groqKeys.size)
+                for (offset in groqKeys.indices) {
+                    val i = (startIndex + offset) % groqKeys.size
+                    val r = runCatching { sendGroq(groqKeys[i], systemPrompt, history, userText) }
+                    if (r.isSuccess) {
+                        settings.set(GROQ_KEY_INDEX, (i + 1) % groqKeys.size)
+                        return@withContext r
+                    }
+                    lastError = r.exceptionOrNull()
+                }
+                // Toutes les clés Groq configurees ont échoué (quota, clé
+                // invalide, panne réseau...) -- on avance quand meme l'index
+                // pour ne pas retenter systematiquement la meme clé en tete
+                // au prochain message, puis on tente Gemini en repli.
+                settings.set(GROQ_KEY_INDEX, (startIndex + 1) % groqKeys.size)
             }
             val geminiKey = settings.get(GEMINI_CLOUD_API_KEY)
             if (!geminiKey.isNullOrBlank()) {
                 val r = runCatching { sendGemini(geminiKey, systemPrompt, history, userText) }
                 if (r.isSuccess) return@withContext r
             }
-            Result.failure(IllegalStateException("Aucune IA cloud disponible (Groq/Gemini absents ou en échec) -- vérifie les clés dans Réglages."))
+            Result.failure(
+                lastError?.let { IllegalStateException("Aucune IA cloud disponible -- dernière erreur Groq : ${it.message}", it) }
+                    ?: IllegalStateException("Aucune IA cloud disponible (Groq/Gemini absents ou en échec) -- vérifie les clés dans Réglages."),
+            )
         }
 
     private fun sendGroq(apiKey: String, systemPrompt: String, history: List<Turn>, userText: String): String {

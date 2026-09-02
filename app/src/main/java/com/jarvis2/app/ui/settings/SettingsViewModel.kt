@@ -8,7 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.ai.GEMINI_CLOUD_API_KEY
-import com.jarvis2.app.ai.GROQ_API_KEY
+import com.jarvis2.app.ai.loadGroqApiKeys
+import com.jarvis2.app.ai.saveGroqApiKeys
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.GoogleAuthNeedsUserActionException
@@ -82,7 +83,12 @@ data class SettingsUiState(
     // lieu de se limiter aux phrases reconnues par les regex locales.
     // Aucune des deux n'est requise : sans cle, l'app reste 100% locale/
     // hors-ligne comme avant.
-    val groqApiKey: String = "",
+    // Multi-cles Groq (task : "met en place le multi cles Groq, avec le petit +
+    // a cote des cles pour ajoute la possibilite de supprimer") : plusieurs
+    // clés gratuites permettent de dépasser le quota journalier d'un seul
+    // compte -- CloudAiClient.send() tourne automatiquement dessus (voir
+    // ai/CloudAiClient.kt). Liste vide = aucune clé configurée = 100% local.
+    val groqApiKeys: List<String> = emptyList(),
     val geminiCloudApiKey: String = "",
     val preferredEngineId: String = "auto",
     val selectedLocalModel: String = "none",
@@ -117,7 +123,7 @@ class SettingsViewModel(
             _state.value = _state.value.copy(
                 engine = engineManager.ensureReady(),
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
-                groqApiKey = settings.get(GROQ_API_KEY).orEmpty(),
+                groqApiKeys = loadGroqApiKeys(settings),
                 geminiCloudApiKey = settings.get(GEMINI_CLOUD_API_KEY).orEmpty(),
                 preferredEngineId = settings.get(PREFERRED_ENGINE_ID) ?: "auto",
                 selectedLocalModel = settings.get(SELECTED_LOCAL_MODEL) ?: "none",
@@ -154,10 +160,31 @@ class SettingsViewModel(
         _state.value = _state.value.copy(webSearchApiKey = key)
     }
 
-    /** Cle Groq (console.groq.com, gratuite, sans carte bancaire) -- priorite dans CloudAiClient.send(). */
-    fun setGroqApiKey(key: String) = viewModelScope.launch {
-        settings.set(GROQ_API_KEY, key)
-        _state.value = _state.value.copy(groqApiKey = key)
+    /**
+     * Remplace la liste complete des clés Groq (console.groq.com, gratuites,
+     * sans carte bancaire) -- appelé par l'UI Réglages après ajout ("+"),
+     * suppression ("✕") ou modification d'une clé. Les entrées vides sont
+     * filtrées automatiquement (voir [saveGroqApiKeys]).
+     */
+    fun setGroqApiKeys(keys: List<String>) = viewModelScope.launch {
+        saveGroqApiKeys(settings, keys)
+        _state.value = _state.value.copy(groqApiKeys = loadGroqApiKeys(settings))
+    }
+
+    /** Ajoute une clé Groq supplémentaire (bouton "+") sans toucher à celles déjà enregistrées. */
+    fun addGroqApiKey(key: String) = viewModelScope.launch {
+        if (key.isBlank()) return@launch
+        val current = loadGroqApiKeys(settings)
+        if (key in current) return@launch
+        saveGroqApiKeys(settings, current + key)
+        _state.value = _state.value.copy(groqApiKeys = loadGroqApiKeys(settings))
+    }
+
+    /** Retire une clé Groq précise (bouton "✕"). */
+    fun removeGroqApiKey(key: String) = viewModelScope.launch {
+        val current = loadGroqApiKeys(settings)
+        saveGroqApiKeys(settings, current - key)
+        _state.value = _state.value.copy(groqApiKeys = loadGroqApiKeys(settings))
     }
 
     /** Cle Gemini cloud (aistudio.google.com, gratuite) -- repli si Groq absent/en echec. */

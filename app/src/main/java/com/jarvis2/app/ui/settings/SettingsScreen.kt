@@ -2,13 +2,16 @@ package com.jarvis2.app.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,11 +29,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.jarvis2.app.ai.gguf.LocalGgufModel
 import com.jarvis2.app.ui.theme.BubbleStyle
@@ -43,7 +48,13 @@ import org.koin.androidx.compose.koinViewModel
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
-    var groqKeyField by remember(state.groqApiKey) { mutableStateOf(state.groqApiKey) }
+    // Multi-cles Groq : liste editable locale, resynchronisee depuis le
+    // ViewModel a chaque changement persiste (ajout/suppression/sauvegarde) ;
+    // toujours au moins une ligne vide si aucune cle n'est encore configuree,
+    // comme dans l'ancienne Newjarvis (SettingsActivity.buildApiKeyFields).
+    val groqKeyFields = remember(state.groqApiKeys) {
+        mutableStateListOf(*state.groqApiKeys.ifEmpty { listOf("") }.toTypedArray())
+    }
     var geminiCloudKeyField by remember(state.geminiCloudApiKey) { mutableStateOf(state.geminiCloudApiKey) }
 
     // Lance l'ecran de consentement Google quand GoogleAuthController signale qu'il en
@@ -149,13 +160,56 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                     "Gemini cloud en repli (gratuit : aistudio.google.com).",
                 style = MaterialTheme.typography.labelSmall,
             )
-            OutlinedTextField(
-                value = groqKeyField,
-                onValueChange = { groqKeyField = it },
-                label = { Text("Clé API Groq") },
+            Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            Button(onClick = { viewModel.setGroqApiKey(groqKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Clés API Groq (rotation automatique)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                Text(
+                    "+",
+                    color = JarvisCyan,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { groqKeyFields.add("") }
+                        .padding(4.dp),
+                )
+            }
+            groqKeyFields.forEachIndexed { index, value ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { groqKeyFields[index] = it },
+                        label = { Text("Clé Groq ${index + 1}") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "✕",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                groqKeyFields.removeAt(index)
+                                // Suppression immediate (pas besoin d'appuyer sur "Enregistrer") :
+                                // au moins une ligne vide reste affichee si la liste est vidée.
+                                viewModel.setGroqApiKeys(groqKeyFields.toList())
+                                if (groqKeyFields.isEmpty()) groqKeyFields.add("")
+                            }
+                            .padding(6.dp),
+                    )
+                }
+            }
+            Button(
+                onClick = { viewModel.setGroqApiKeys(groqKeyFields.toList()) },
+                modifier = Modifier.padding(top = 8.dp),
+            ) { Text("Enregistrer") }
             OutlinedTextField(
                 value = geminiCloudKeyField,
                 onValueChange = { geminiCloudKeyField = it },
