@@ -474,10 +474,19 @@ class CommandRouter(
                 integrations.mail.composeMail(subject = subject, body = "")
                 CommandResult.Handled("Ouverture de ton application mail avec le sujet \"$subject\".")
             },
-            Matcher(Regex("(crée|ajoute|nouvelle).*(note).*(vault|obsidian)|(vault|obsidian).*(crée|ajoute|nouvelle).*note")) { t ->
-                val titleGuess = extractAfter(t, listOf("intitulée", "appelée", "titre", "titrée")) ?: "Note Jarvis"
+            // Task #309 -- signalement utilisateur : "il enregistre pas les donnees,
+            // ne cree pas de notes". Root cause reelle : cette regex exigeait
+            // auparavant de dire explicitement "vault" OU "obsidian" dans la meme
+            // phrase pour declencher la creation ("crée une note ... dans le
+            // vault"), ce qu'aucun usage naturel ("crée une note Courses : lait,
+            // pain", "note que je dois rappeler Paul") ne fait jamais -- la phrase
+            // tombait donc systematiquement dans la conversation LLM generale, qui
+            // n'a aucun moyen d'ecrire dans le vault, d'ou l'impression que "rien
+            // n'est jamais enregistre". Plus besoin de mentionner vault/obsidian.
+            Matcher(Regex("""(crée|créer|ajoute|nouvelle|nouveau).*note|^note\s*[:\-]|note\s+que""")) { t ->
+                val (titleGuess, bodyGuess) = extractNoteTitleAndBody(t)
                 val folderGuess = extractAfter(t, listOf("dans le dossier", "dans le folder")).orEmpty()
-                val body = vault.autoLink(t, excludeTitle = titleGuess)
+                val body = vault.autoLink(bodyGuess, excludeTitle = titleGuess)
                 val note = vault.createNote(titleGuess, body = body, folderPath = folderGuess)
                 val where = if (folderGuess.isBlank()) "dans le vault Obsidian" else "dans le dossier « $folderGuess » du vault"
                 CommandResult.Handled("Note « ${note.title} » créée $where.")
@@ -1203,5 +1212,26 @@ class CommandRouter(
             }
         }
         return null
+    }
+
+    /**
+     * Devine le titre + le corps d'une note a creer depuis la phrase de
+     * commande (task #309). Priorite : 1) marqueur explicite ("note
+     * intitulée X", "note appelée X", "note titrée X") -- corps = phrase
+     * entiere, comportement historique inchange pour ces cas ; 2) motif
+     * "note <titre> : <corps>" / "note <titre> - <corps>", tres frequent en
+     * usage naturel ("crée une note Courses : lait, pain, oeufs") et qui
+     * donnait auparavant un titre par defaut peu utile ; 3) repli : titre
+     * "Note Jarvis", corps = phrase entiere telle quelle.
+     */
+    private fun extractNoteTitleAndBody(t: String): Pair<String, String> {
+        extractAfter(t, listOf("intitulée", "appelée", "titrée", "titre"))?.let { marker -> return marker to t }
+        val colonMatch = Regex("""note\s+([^:\-]{2,60}?)\s*[:\-]\s*(.+)""").find(t)
+        if (colonMatch != null) {
+            val title = colonMatch.groupValues[1].trim().takeIf { it.isNotBlank() }?.replaceFirstChar { c -> c.uppercase() }
+            val body = colonMatch.groupValues[2].trim()
+            if (title != null && body.isNotBlank()) return title to body
+        }
+        return "Note Jarvis" to t
     }
 }
