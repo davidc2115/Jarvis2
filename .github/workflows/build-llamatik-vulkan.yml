@@ -190,7 +190,24 @@ jobs:
         # contre la resolution CMake, on complete directement le sysroot du NDK en y copiant
         # le header C++ manquant depuis le SDK LunarG hote -- le NDK le trouvera alors
         # exactement la ou il cherche deja avec succes pour vulkan.h.
-        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH" --stacktrace
+        # NOUVELLE erreur (tous les headers Vulkan/SPIRV se compilent desormais correctement,
+        # voir les etapes precedentes) : erreur au LINK, pas a la compilation --
+        # "undefined symbol: vkGetPhysicalDeviceFeatures2" dans le stub libvulkan.so fourni
+        # par le NDK pour l'API 26 (= minSdk du module, .../lib/aarch64-linux-android/26/
+        # libvulkan.so, verifie via les logs bruts CI). Cette fonction Vulkan CORE 1.1 (pas
+        # l'extension VK_KHR_get_physical_device_properties2) n'est listee dans le stub NDK
+        # qu'a partir d'un niveau d'API plus recent -- le stub API 26 ne connait que
+        # "vkGetPhysicalDeviceFeatures" (sans le 2), d'ou le lien qui echoue.
+        # Fix : forcer -DANDROID_PLATFORM=android-29 en fin de liste d'arguments cmake, qui
+        # l'emporte sur la valeur "android-26" injectee automatiquement par AGP a partir du
+        # minSdk (CMake retient la DERNIERE occurrence -D d'une meme variable sur la ligne de
+        # commande) -- fait lier l'AAR contre un stub NDK plus recent qui expose ce symbole.
+        # Sans impact sur la compatibilite runtime : minSdk de l'app reste 26, et lier contre
+        # un stub d'API plus recent ne rend pas la lib inutilisable sur un appareil plus
+        # ancien tant que le code ne CALL pas reellement une fonction absente du loader
+        # Vulkan reel de cet appareil -- ggml-vulkan verifie deja la version d'instance
+        # Vulkan disponible avant d'utiliser les fonctionnalites 1.1.
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DANDROID_PLATFORM=android-29" --stacktrace
 
       - name: Locate the built AAR
         id: locate
