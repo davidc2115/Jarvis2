@@ -3,16 +3,17 @@ package com.jarvis2.app.ai.gguf
 /**
  * Catalogue des modeles GGUF optionnels proposes en remplacement de Gemma 3
  * 1B (retire -- verrouille derriere une licence Hugging Face, contrairement
- * a ces trois-la). Chaque entree a ete verifiee individuellement via l'API
+ * a ceux-la). Chaque entree a ete verifiee individuellement via l'API
  * Hugging Face avant d'etre ajoutee ici :
  *  - GET https://huggingface.co/api/models/{repo} -> "gated": false
  *  - GET https://huggingface.co/api/models/{repo}/tree/main -> taille exacte
- *    en octets du fichier Q4_K_M precis (le champ gguf.totalFileSize de la
+ *    en octets du fichier precis choisi (le champ gguf.totalFileSize de la
  *    1ere requete n'est PAS la taille d'une quantification particuliere).
- * Aucun des trois ne necessite de compte, de jeton d'acces personnel ni de
- * cle API -- exactement ce que l'utilisateur a demande en remplacement de
- * Gemma. Quantification Q4_K_M choisie pour chacun : le compromis
- * taille/qualite habituel de la communaute llama.cpp.
+ * Aucun ne necessite de compte, de jeton d'acces personnel ni de cle API.
+ * Quantification Q4_K_M choisie par defaut pour les petits modeles : le
+ * compromis taille/qualite habituel de la communaute llama.cpp. BONSAI_27B
+ * fait exception (voir sa doc) : quantification native 1-bit du modele lui-
+ * meme, pas un post-traitement Q4_K_M d'un GGUF F16 classique.
  */
 enum class LocalGgufModel(
     val id: String,
@@ -44,6 +45,35 @@ enum class LocalGgufModel(
         repo = "bartowski/Dolphin3.0-Qwen2.5-1.5B-GGUF",
         filename = "Dolphin3.0-Qwen2.5-1.5B-Q4_K_M.gguf",
         sizeBytes = 986_051_648L,
+        license = "Apache-2.0",
+    ),
+
+    /**
+     * Bonsai 27B (PrismML, juillet 2026) : derive quantifie en 1-bit natif de
+     * Qwen3.6-27B -- premier modele "classe 27B" tenant sur un telephone
+     * (~3.8 Go pour la variante Q1_0 ici retenue, contre ~54 Go en F16).
+     * Repo verifie non gated (GET /api/models/prism-ml/Bonsai-27B-gguf ->
+     * "gated": false, license apache-2.0) ; taille exacte lue sur
+     * /tree/main pour Bonsai-27B-Q1_0.gguf.
+     *
+     * A la difference des trois modeles ci-dessus, c'est un poids lourd :
+     * bien plus gros et plus lent a charger/inferer sur telephone que Qwen
+     * 1.5B/Phi-3.5 mini/Dolphin, et son architecture ("qwen35", attention
+     * hybride + noyaux 1-bit dedies) est recente -- si la version de
+     * llama.cpp embarquee dans Llamatik ne la supporte pas encore,
+     * LlamaBridge.initGenerateModel() echouera proprement (voir
+     * SelectableLlmEngine.prepare(), qui remonte alors l'erreur via
+     * lastError sans planter l'appli). Ajoute a la demande explicite de
+     * l'utilisateur, pas de mmproj (vision) embarque ici : cette entree
+     * reste texte-seul comme les trois autres, en coherence avec le reste
+     * du catalogue.
+     */
+    BONSAI_27B(
+        id = "bonsai-27b",
+        displayName = "Bonsai 27B (1-bit, PrismML)",
+        repo = "prism-ml/Bonsai-27B-gguf",
+        filename = "Bonsai-27B-Q1_0.gguf",
+        sizeBytes = 3_803_452_480L,
         license = "Apache-2.0",
     );
 
