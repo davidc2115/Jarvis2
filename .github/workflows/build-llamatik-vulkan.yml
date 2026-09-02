@@ -97,10 +97,16 @@ jobs:
         # trouvera alors exactement la ou il trouve deja vulkan.h avec succes.
         run: |
           set -e
-          NDK_VULKAN_DIR=$(find /usr/local/lib/android/sdk/ndk -maxdepth 8 -type d -path "*/sysroot/usr/include/vulkan" | head -n 1)
+          # maxdepth genereux et calcule une seule fois pour la profondeur EXACTE observee
+          # (.../ndk/<version>/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/vulkan
+          # = 9 niveaux sous /usr/local/lib/android/sdk/ndk) -- le run precedent utilisait
+          # -maxdepth 8, une unite trop court, donc le find ne trouvait RIEN du tout (meme le
+          # find de secours en diagnostic, avec -maxdepth 6, etait lui aussi trop court) : le
+          # job a echoue avec "Repertoire vulkan/ introuvable" avant meme d'atteindre le build.
+          NDK_VULKAN_DIR=$(find /usr/local/lib/android/sdk/ndk -maxdepth 12 -type d -path "*/sysroot/usr/include/vulkan" | head -n 1)
           if [ -z "$NDK_VULKAN_DIR" ]; then
             echo "::error::Repertoire vulkan/ introuvable dans le sysroot du NDK -- structure NDK inattendue ?"
-            find /usr/local/lib/android/sdk/ndk -maxdepth 6 -iname "vulkan*" || true
+            find /usr/local/lib/android/sdk/ndk -maxdepth 12 -iname "vulkan*" || true
             exit 1
           fi
           echo "Repertoire vulkan/ du sysroot NDK : $NDK_VULKAN_DIR"
