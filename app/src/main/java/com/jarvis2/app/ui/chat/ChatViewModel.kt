@@ -137,9 +137,7 @@ class ChatViewModel(
                     val (cleanText, command) = JarvisCommandParser.parse(rawReply)
                     val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
                     val reply = when (actionFeedback) {
-                        is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText
-
-${actionFeedback.feedback}"
+                        is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText\n\n${actionFeedback.feedback}"
                         is CommandResult.NeedsPermission -> actionFeedback.feedback
                         else -> cleanText.ifBlank { "D'accord." }
                     }
@@ -262,7 +260,7 @@ ${actionFeedback.feedback}"
         appendLine(
             "Si le message de l'utilisateur demande une des actions suivantes, termine ta réponse (après le " +
                 "texte que tu veux afficher à l'utilisateur, ou seul si aucun texte n'est nécessaire) par UN SEUL " +
-                "bloc au format exact [JARVIS_CMD:{"action":"NOM_ACTION",...}] (JSON valide sur une seule ligne). " +
+                "bloc au format exact [JARVIS_CMD:{\"action\":\"NOM_ACTION\",...}] (JSON valide sur une seule ligne). " +
                 "Ce bloc est retiré automatiquement avant affichage, n'en parle jamais à l'utilisateur.",
         )
         appendLine()

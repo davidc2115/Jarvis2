@@ -309,7 +309,7 @@ class CommandRouter(
                 } else {
                     val group = resolveCalendarGroup(name)
                     if (group == null) {
-                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis "liste les calendriers" pour voir les noms disponibles.")
+                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis « liste les calendriers » pour voir les noms disponibles.")
                     } else {
                         setCalendarGroupHidden(group, hidden = true)
                         CommandResult.Handled("Calendrier « ${group.displayName} » masqué du planning par défaut. Dis « réaffiche le calendrier ${group.displayName} » pour le remontrer.")
@@ -323,7 +323,7 @@ class CommandRouter(
                 } else {
                     val group = resolveCalendarGroup(name)
                     if (group == null) {
-                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis "liste les calendriers" pour voir les noms disponibles.")
+                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis « liste les calendriers » pour voir les noms disponibles.")
                     } else {
                         setCalendarGroupHidden(group, hidden = false)
                         CommandResult.Handled("Calendrier « ${group.displayName} » de nouveau affiché dans le planning.")
