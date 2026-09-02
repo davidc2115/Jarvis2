@@ -8,8 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
 import com.jarvis2.app.data.SettingsDataStore
-import com.jarvis2.app.integrations.CalendarGroup
-import com.jarvis2.app.integrations.CalendarRepository
 import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.GoogleAuthNeedsUserActionException
 import com.jarvis2.app.proactive.PROACTIVE_BRIEFING_ENABLED
@@ -91,17 +89,12 @@ data class SettingsUiState(
     val gmailConnectError: String? = null,
     /** Non-null quand Google exige une confirmation -- l'UI doit le lancer via StartActivityForResult puis rappeler connectGmail(). */
     val pendingGmailAuthIntent: Intent? = null,
-    /** Chaque calendrier reellement distinct du telephone (deja deduplique -- voir CalendarRepository.listCalendarGroups). */
-    val calendarGroups: List<CalendarGroup> = emptyList(),
-    /** Id CalendarContract actuellement masques (voir HIDDEN_CALENDAR_IDS) -- un groupe est "affiche" si AUCUN de ses ids n'est dans cet ensemble. */
-    val hiddenCalendarIds: Set<Long> = emptySet(),
 )
 
 class SettingsViewModel(
     private val engineManager: AiEngineManager,
     private val settings: SettingsDataStore,
     private val googleAuth: GoogleAuthController,
-    private val calendarRepository: CalendarRepository,
     private val appContext: Context,
 ) : ViewModel() {
 
@@ -124,7 +117,6 @@ class SettingsViewModel(
                 proactiveBriefingEnabled = (settings.get(PROACTIVE_BRIEFING_ENABLED) ?: "true") == "true",
             )
             _state.value = _state.value.copy(gmailConnected = googleAuth.isConnected())
-            refreshCalendars()
         }
         // Observe la progression en direct des telechargements de modele
         // (voir AiEngineManager.activeEngine) au lieu de ne lire l'etat du
@@ -142,36 +134,6 @@ class SettingsViewModel(
 
     fun refreshEngine() = viewModelScope.launch {
         _state.value = _state.value.copy(engine = engineManager.refresh())
-    }
-
-    /**
-     * Recharge la liste (deja deduplique par groupe -- voir
-     * CalendarRepository.listCalendarGroups) des calendriers du telephone
-     * ainsi que les id masques persistes, pour peupler la section
-     * "Calendriers affiches" de Reglages (task #308). Appele au demarrage
-     * et apres chaque bascule d'un calendrier, pour rester coherent si un
-     * nouveau compte est ajoute pendant que Reglages est ouvert.
-     */
-    fun refreshCalendars() = viewModelScope.launch {
-        val hiddenRaw = settings.get(HIDDEN_CALENDAR_IDS).orEmpty()
-        val hidden = hiddenRaw.split(",").mapNotNull { it.trim().toLongOrNull() }.toSet()
-        _state.value = _state.value.copy(
-            calendarGroups = calendarRepository.listCalendarGroups(),
-            hiddenCalendarIds = hidden,
-        )
-    }
-
-    /**
-     * Affiche/masque un calendrier (et tous ses id doublons -- voir
-     * [CalendarGroup.ids]) dans le planning par defaut. Persiste
-     * immediatement dans HIDDEN_CALENDAR_IDS ; CommandRouter lit cette
-     * meme cle a chaque requete de planning sans filtre de nom explicite.
-     */
-    fun setCalendarGroupVisible(group: CalendarGroup, visible: Boolean) = viewModelScope.launch {
-        val current = _state.value.hiddenCalendarIds.toMutableSet()
-        if (visible) current.removeAll(group.ids.toSet()) else current.addAll(group.ids)
-        settings.set(HIDDEN_CALENDAR_IDS, current.joinToString(","))
-        _state.value = _state.value.copy(hiddenCalendarIds = current)
     }
 
     fun setWebSearchApiKey(key: String) = viewModelScope.launch {

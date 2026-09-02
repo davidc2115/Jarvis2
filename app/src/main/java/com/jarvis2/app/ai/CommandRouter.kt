@@ -3,6 +3,7 @@ package com.jarvis2.app.ai
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.CalendarEvent
+import com.jarvis2.app.integrations.CalendarGroup
 import com.jarvis2.app.integrations.CalendarInfo
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
@@ -263,6 +264,46 @@ class CommandRouter(
                     CommandResult.Handled(renderEvents(events, label))
                 }
             },
+            // Task #311 -- signalement utilisateur : "je ne veux rien dans les reglages,
+            // que jarvis comprenne vraiment comme un vrai assistant". Le choix des
+            // calendriers a afficher passe donc entierement par la conversation
+            // (comme le reste : surnoms, presentation...) plutot que par une case a
+            // cocher -- reutilise le meme mecanisme HIDDEN_CALENDAR_IDS que la version
+            // precedente, seul le declencheur change. "affiche tous les calendriers"
+            // doit etre reconnu AVANT le matcher generique de listage juste en dessous
+            // (qui matcherait sinon la meme phrase avec "affiche").
+            Matcher(Regex("""(réaffiche|remontre|affiche)\s+tous\s+les\s+calendriers""")) {
+                settings.remove(HIDDEN_CALENDAR_IDS)
+                CommandResult.Handled("Tous les calendriers sont de nouveau affichés dans le planning.")
+            },
+            Matcher(Regex("""(cache|masque)\s+le\s+calendrier\s+.+|n.affiche\s+plus\s+le\s+calendrier\s+.+""")) { t ->
+                val name = extractAfter(t, listOf("calendrier"))
+                if (name == null) {
+                    CommandResult.Handled("Précise quel calendrier masquer, par exemple « cache le calendrier Travail ».")
+                } else {
+                    val group = resolveCalendarGroup(name)
+                    if (group == null) {
+                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis "liste les calendriers" pour voir les noms disponibles.")
+                    } else {
+                        setCalendarGroupHidden(group, hidden = true)
+                        CommandResult.Handled("Calendrier « ${group.displayName} » masqué du planning par défaut. Dis « réaffiche le calendrier ${group.displayName} » pour le remontrer.")
+                    }
+                }
+            },
+            Matcher(Regex("""(réaffiche|remontre)\s+le\s+calendrier\s+.+|affiche\s+(à|a)\s+nouveau\s+le\s+calendrier\s+.+|affiche\s+de\s+nouveau\s+le\s+calendrier\s+.+""")) { t ->
+                val name = extractAfter(t, listOf("calendrier"))
+                if (name == null) {
+                    CommandResult.Handled("Précise quel calendrier réafficher, par exemple « réaffiche le calendrier Travail ».")
+                } else {
+                    val group = resolveCalendarGroup(name)
+                    if (group == null) {
+                        CommandResult.Handled("Aucun calendrier trouvé pour « $name » — dis "liste les calendriers" pour voir les noms disponibles.")
+                    } else {
+                        setCalendarGroupHidden(group, hidden = false)
+                        CommandResult.Handled("Calendrier « ${group.displayName} » de nouveau affiché dans le planning.")
+                    }
+                }
+            },
             Matcher(Regex("""(liste|montre|affiche|quels?).*calendriers?""")) {
                 // listCalendarGroups() deduplique les entrees identiques (meme nom +
                 // meme compte) -- voir task #308 : sans ca, un calendrier synchronise
@@ -277,7 +318,7 @@ class CommandRouter(
                         "Calendriers disponibles : " + groups.joinToString(", ") { g ->
                             val masque = visibleIds != null && g.ids.none { it in visibleIds }
                             "${g.displayName} (${g.accountName})" + if (masque) " [masqué]" else ""
-                        } + " — modifiable dans Réglages > Calendriers affichés.",
+                        } + " — dis « cache le calendrier X » ou « réaffiche le calendrier X » pour changer.",
                     )
                 }
             },
@@ -1014,6 +1055,30 @@ class CommandRouter(
         if (hidden.isEmpty()) return null
         val allIds = integrations.calendar.listCalendars().map { it.id }.toSet()
         return allIds - hidden
+    }
+
+    /**
+     * Resout un nom/surnom vers un [CalendarGroup] (calendrier deduplique --
+     * voir [CalendarRepository.listCalendarGroups]) pour les commandes
+     * conversationnelles "cache/réaffiche le calendrier X" (task #311).
+     * Reutilise les memes surnoms que [resolveCalendarFilter].
+     */
+    private suspend fun resolveCalendarGroup(nameQuery: String): CalendarGroup? {
+        val groups = integrations.calendar.listCalendarGroups()
+        if (groups.isEmpty()) return null
+        val nicknames = loadCalendarNicknames()
+        val resolvedName = nicknames[nameQuery.lowercase()] ?: nameQuery
+        return groups.firstOrNull {
+            it.displayName.contains(resolvedName, ignoreCase = true) || it.accountName.contains(resolvedName, ignoreCase = true)
+        }
+    }
+
+    /** Masque/reaffiche un calendrier entier (tous ses id doublons -- voir [CalendarGroup.ids]) dans le planning par defaut, persiste dans HIDDEN_CALENDAR_IDS. */
+    private suspend fun setCalendarGroupHidden(group: CalendarGroup, hidden: Boolean) {
+        val hiddenRaw = settings.get(HIDDEN_CALENDAR_IDS).orEmpty()
+        val current = hiddenRaw.split(",").mapNotNull { it.trim().toLongOrNull() }.toMutableSet()
+        if (hidden) current.addAll(group.ids) else current.removeAll(group.ids.toSet())
+        settings.set(HIDDEN_CALENDAR_IDS, current.joinToString(","))
     }
 
     /** Surnoms de calendrier enregistres (voir le matcher "surnomme le calendrier ... en ..."), sous forme surnom (minuscule) -> vrai nom. */

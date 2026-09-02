@@ -89,7 +89,7 @@ val viewModelModule = module {
     viewModel { GraphViewModel(get()) }
     viewModel { IntegrationsViewModel(get()) }
     viewModel { FileToolsViewModel(get()) }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), androidContext()) }
+    viewModel { SettingsViewModel(get(), get(), get(), androidContext()) }
 }
 
 /** Small helper so module bodies above read as `androidContext()` like the rest of the Koin ecosystem. */
