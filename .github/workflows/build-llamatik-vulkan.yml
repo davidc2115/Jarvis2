@@ -84,41 +84,47 @@ jobs:
           sed -i 's/abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")/abiFilters += setOf("arm64-v8a")/' llamatik-src/library/build.gradle.kts
           grep -n "abiFilters" llamatik-src/library/build.gradle.kts
 
-      - name: Copier vulkan.hpp (bindings C++) dans le sysroot du NDK
+      - name: Copier les headers Vulkan (C++ et C) du SDK hote dans le sysroot du NDK
         # Le NDK Android fournit vulkan/vulkan.h (API C, pour lier libvulkan.so) mais pas
         # vulkan/vulkan.hpp (bindings C++ que ggml-vulkan.cpp inclut) -- voir les commentaires
         # detailles sur l'etape de build ci-dessous pour l'historique des tentatives
         # precedentes (CMAKE_FIND_ROOT_PATH_MODE=BOTH, puis -DVulkan_INCLUDE_DIR=/usr/include)
         # qui n'ont pas fonctionne : le repertoire vulkan/ du sysroot NDK est deja sur le
         # chemin d'include implicite du compilateur (via --sysroot), donc find_path() y
-        # trouve vulkan.h en premier quoi qu'on fasse cote CMake. Solution directe : on
-        # complete ce meme repertoire avec le(s) header(s) C++ manquant(s), copies depuis le
-        # SDK Vulkan LunarG installe cote hote (etape precedente) -- le compilateur les
-        # trouvera alors exactement la ou il trouve deja vulkan.h avec succes.
+        # trouve vulkan.h en premier quoi qu'on fasse cote CMake.
+        #
+        # 1ere tentative -- ne copier QUE vulkan.hpp (+ vulkan_*.hpp) par-dessus le
+        # vulkan_core.h EXISTANT du NDK -- a permis de depasser l'erreur "file not found"
+        # mais a produit une erreur DIFFERENTE ensuite (verifiee via les logs bruts CI) :
+        # "unknown type name 'VkSubresourceLayout2'", 'VkRenderingAttachmentLocationInfo',
+        # etc. Cause : le vulkan.hpp du SDK LunarG hote (recent) reference des structs
+        # d'extensions Vulkan 1.3 recentes qui n'existent PAS dans le vulkan_core.h plus
+        # ancien fourni par ce NDK -- les deux fichiers doivent venir de la MEME version
+        # de Vulkan-Headers pour etre compatibles entre eux.
+        #
+        # Fix : copier l'intégralité du repertoire vulkan/ du SDK hote (vulkan_core.h ETC
+        # ausi, pas seulement les .hpp), pour remplacer completement le jeu de headers du
+        # NDK par un jeu coherent et plus recent. Sans risque a l'execution : ce sont des
+        # headers de COMPILATION uniquement (structs/enums, purement additifs) -- le
+        # binding reel au runtime Vulkan du telephone se fait via libvulkan.so (charge
+        # dynamiquement), pas via ces headers, et ggml-vulkan interroge les extensions
+        # disponibles au runtime plutot que de les supposer presentes.
         run: |
           set -e
           # maxdepth genereux et calcule une seule fois pour la profondeur EXACTE observee
           # (.../ndk/<version>/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/vulkan
-          # = 9 niveaux sous /usr/local/lib/android/sdk/ndk) -- le run precedent utilisait
-          # -maxdepth 8, une unite trop court, donc le find ne trouvait RIEN du tout (meme le
-          # find de secours en diagnostic, avec -maxdepth 6, etait lui aussi trop court) : le
-          # job a echoue avec "Repertoire vulkan/ introuvable" avant meme d'atteindre le build.
+          # = 9 niveaux sous /usr/local/lib/android/sdk/ndk) -- un run precedent utilisait
+          # -maxdepth 8, une unite trop court, donc le find ne trouvait RIEN du tout.
           NDK_VULKAN_DIR=$(find /usr/local/lib/android/sdk/ndk -maxdepth 12 -type d -path "*/sysroot/usr/include/vulkan" | head -n 1)
           if [ -z "$NDK_VULKAN_DIR" ]; then
             echo "::error::Repertoire vulkan/ introuvable dans le sysroot du NDK -- structure NDK inattendue ?"
             find /usr/local/lib/android/sdk/ndk -maxdepth 12 -iname "vulkan*" || true
             exit 1
           fi
-          echo "Repertoire vulkan/ du sysroot NDK : $NDK_VULKAN_DIR"
+          echo "Repertoire vulkan/ du sysroot NDK (avant) : $NDK_VULKAN_DIR"
           ls -la "$NDK_VULKAN_DIR"
-          sudo cp -v /usr/include/vulkan/vulkan.hpp "$NDK_VULKAN_DIR/"
-          # Versions recentes de Vulkan-Hpp eclatent les bindings en plusieurs fichiers
-          # (vulkan_structs.hpp, vulkan_funcs.hpp, vulkan_handles.hpp, vulkan_enums.hpp,
-          # vulkan_raii.hpp, vulkan_hash.hpp, ...) que vulkan.hpp inclut en cascade --
-          # on les copie tous s'ils existent, silencieusement sinon (vieille version SDK).
-          for f in /usr/include/vulkan/vulkan_*.hpp; do
-            [ -e "$f" ] && sudo cp -v "$f" "$NDK_VULKAN_DIR/"
-          done
+          echo "--- Remplacement complet par le jeu de headers du SDK LunarG hote ---"
+          sudo cp -rv /usr/include/vulkan/. "$NDK_VULKAN_DIR/"
           echo "--- Contenu final de $NDK_VULKAN_DIR ---"
           ls -la "$NDK_VULKAN_DIR"
 
