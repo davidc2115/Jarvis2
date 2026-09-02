@@ -75,6 +75,46 @@ enum class LocalGgufModel(
         filename = "Bonsai-27B-Q1_0.gguf",
         sizeBytes = 3_803_452_480L,
         license = "Apache-2.0",
+    ),
+
+    /**
+     * Gemma 4 E4B (Google, avril 2026) : contrairement a Gemma 3, publie
+     * directement sous Apache-2.0 (plus de licence Hugging Face restrictive
+     * -- voir la doc de classe et task #231/#263, raison initiale du retrait
+     * de Gemma). "E4B" = 4.5 milliards de parametres effectifs (~8 Md avec
+     * les embeddings, architecture elastique type Matformer), multimodal
+     * texte/image/audio a l'entrainement, 128K tokens de contexte. Repo
+     * verifie non gated. N'expose ici que le texte (pas de mmproj/vision --
+     * meme choix que BONSAI_27B, coherence du catalogue).
+     */
+    GEMMA_4_E4B(
+        id = "gemma4-e4b",
+        displayName = "Gemma 4 E4B",
+        repo = "bartowski/google_gemma-4-E4B-it-GGUF",
+        filename = "google_gemma-4-E4B-it-Q4_K_M.gguf",
+        sizeBytes = 5_405_168_384L,
+        license = "Apache-2.0",
+    ),
+
+    /**
+     * LFM2.5-VL 1.6B (Liquid AI) : reponse a la demande explicite de
+     * l'utilisateur d'un modele local, multimodal, RAPIDE (comparable a la
+     * vitesse d'inference cloud type Groq) -- c'est le point fort revendique
+     * de cette famille (228 tok/s sur Apple M5 Max, <3.3 Go de RAM pour la
+     * variante 3B ; celle-ci, 1.6B, est plus petite/rapide encore, pensee
+     * pour l'edge/telephone). Licence "LFM Open License v1.0" (pas Apache/
+     * MIT) : usage libre pour un particulier, restriction Commercial Use
+     * uniquement au-dela de 10 M$ de revenu annuel -- sans objet ici.
+     * Non gated, aucun compte requis. Texte seul expose (pas de mmproj),
+     * comme les autres entrees.
+     */
+    LFM_2_5_VL_1_6B(
+        id = "lfm2.5-vl-1.6b",
+        displayName = "LFM2.5-VL 1.6B (Liquid AI, rapide)",
+        repo = "LiquidAI/LFM2.5-VL-1.6B-GGUF",
+        filename = "LFM2.5-VL-1.6B-Q4_K_M.gguf",
+        sizeBytes = 730_896_256L,
+        license = "LFM Open v1.0 (libre, <10M$/an)",
     );
 
     val downloadUrl: String get() = "https://huggingface.co/$repo/resolve/main/$filename"
