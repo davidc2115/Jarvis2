@@ -25,6 +25,15 @@ data class CalendarEvent(
 /** Un calendrier du telephone (voir [CalendarRepository.listCalendars]). */
 data class CalendarInfo(val id: Long, val displayName: String, val accountName: String)
 
+/**
+ * Un ou plusieurs [CalendarInfo] regroupes sous la meme identite visible
+ * (meme nom d'affichage + meme compte) -- voir [CalendarRepository.listCalendarGroups].
+ * [ids] contient TOUS les id bruts CalendarContract derriere ce doublon
+ * apparent, pour qu'une case a cocher "affiche ce calendrier" dans Reglages
+ * agisse sur le groupe entier d'un coup plutot que sur un seul id au hasard.
+ */
+data class CalendarGroup(val displayName: String, val accountName: String, val ids: List<Long>)
+
 /** Reads/writes the device calendar via CalendarContract — requires READ/WRITE_CALENDAR. */
 class CalendarRepository(private val context: Context) {
 
@@ -66,6 +75,21 @@ class CalendarRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Comme [listCalendars] mais regroupe les entrees identiques (meme nom
+     * d'affichage + meme compte) sous une seule ligne -- CalendarContract
+     * expose legitimement le meme calendrier plusieurs fois quand plusieurs
+     * comptes/applis le synchronisent en parallele (signalement utilisateur :
+     * "certains calendriers sont en double"). Utilise par l'ecran Reglages
+     * (task #308) pour proposer UNE case a cocher par calendrier reellement
+     * distinct plutot qu'une ligne par id brut.
+     */
+    fun listCalendarGroups(): List<CalendarGroup> =
+        listCalendars()
+            .groupBy { it.displayName to it.accountName }
+            .map { (key, cals) -> CalendarGroup(displayName = key.first, accountName = key.second, ids = cals.map { c -> c.id }) }
+            .sortedBy { it.displayName.lowercase() }
+
     fun createEvent(title: String, startTimeMillis: Long, durationMillis: Long = 3_600_000L, description: String = ""): Long? {
         val calId = defaultCalendarId() ?: return null
         val values = ContentValues().apply {
@@ -97,8 +121,20 @@ class CalendarRepository(private val context: Context) {
      * creation d'evenement) : Android joint automatiquement les colonnes
      * CALENDAR_DISPLAY_NAME/CALENDAR_ID de la table Calendars sur une requete
      * Events, donc pas besoin de jointure manuelle.
+     *
+     * [calendarIds] filtre sur un ENSEMBLE de calendriers -- utilise pour
+     * respecter la selection "calendriers affiches" choisie dans Reglages
+     * (voir SettingsScreen.kt / SettingsViewModel.kt, task #308) quand
+     * aucun nom de calendrier precis n'a ete demande dans la phrase.
+     * Ignore si [calendarId] est deja fourni (priorite au filtre precis).
      */
-    fun eventsInRange(fromMillis: Long, toMillis: Long, limit: Int = 50, calendarId: Long? = null): List<CalendarEvent> {
+    fun eventsInRange(
+        fromMillis: Long,
+        toMillis: Long,
+        limit: Int = 50,
+        calendarId: Long? = null,
+        calendarIds: Set<Long>? = null,
+    ): List<CalendarEvent> {
         val projection = arrayOf(
             CalendarContract.Events._ID,
             CalendarContract.Events.TITLE,
@@ -107,14 +143,23 @@ class CalendarRepository(private val context: Context) {
             CalendarContract.Events.CALENDAR_ID,
             CalendarContract.Events.CALENDAR_DISPLAY_NAME,
         )
+        val idsFilter = calendarIds?.takeIf { it.isNotEmpty() }
         val selection = buildString {
             append("${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ?")
-            if (calendarId != null) append(" AND ${CalendarContract.Events.CALENDAR_ID} = ?")
+            if (calendarId != null) {
+                append(" AND ${CalendarContract.Events.CALENDAR_ID} = ?")
+            } else if (idsFilter != null) {
+                append(" AND ${CalendarContract.Events.CALENDAR_ID} IN (${idsFilter.joinToString(",") { "?" }})")
+            }
         }
         val args = buildList {
             add(fromMillis.toString())
             add(toMillis.toString())
-            if (calendarId != null) add(calendarId.toString())
+            if (calendarId != null) {
+                add(calendarId.toString())
+            } else if (idsFilter != null) {
+                idsFilter.forEach { add(it.toString()) }
+            }
         }.toTypedArray()
         val cursor = context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI, projection, selection, args,

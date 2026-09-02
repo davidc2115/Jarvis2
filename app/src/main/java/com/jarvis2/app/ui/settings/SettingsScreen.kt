@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -236,6 +237,42 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Task #308 -- signalement utilisateur : "detecte bien mes calendriers, mais
+            // toujours impossible de choisir le calendrier a afficher, certains en double,
+            // d'autres n'apparaissent pas". listCalendarGroups() deduplique deja les entrees
+            // identiques (meme nom + meme compte) cote CalendarRepository, donc chaque ligne
+            // ci-dessous correspond a un calendrier reellement distinct. Decoche = exclu du
+            // planning par defaut ("mon planning", "j'ai quoi demain") ; le filtrage par nom
+            // explicite ("planning de Thomas") continue d'ignorer cette selection.
+            Text("Calendriers affichés", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            if (state.calendarGroups.isEmpty()) {
+                Text(
+                    "Aucun calendrier détecté (permission Agenda non accordée, ou aucun compte synchronisé).",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            } else {
+                state.calendarGroups.forEach { group ->
+                    val visible = group.ids.none { it in state.hiddenCalendarIds }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Checkbox(checked = visible, onCheckedChange = { viewModel.setCalendarGroupVisible(group, it) })
+                        Column {
+                            Text(group.displayName, style = MaterialTheme.typography.bodyMedium)
+                            if (group.accountName.isNotBlank()) {
+                                Text(group.accountName, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+            Text(
+                "Un calendrier absent de cette liste n'est pas encore synchronisé sur l'appareil -- vérifie dans l'app Agenda Google (compte concerné → synchronisation des calendriers) qu'il est bien coché là-bas ; Jarvis ne peut lire que ce qu'Android expose.",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

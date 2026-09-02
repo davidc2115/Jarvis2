@@ -14,6 +14,7 @@ import com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR
 import com.jarvis2.app.ui.settings.BUBBLE_SHAPE
 import com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR
 import com.jarvis2.app.ui.settings.CALENDAR_GROUP_BY_DAY
+import com.jarvis2.app.ui.settings.HIDDEN_CALENDAR_IDS
 import com.jarvis2.app.ui.theme.BubbleStyle
 
 /** Outcome of trying to interpret a message as a device action rather than plain chat. */
@@ -249,7 +250,11 @@ class CommandRouter(
                 // regression sur le comportement existant sans nom de calendrier.
                 val nameQuery = extractCalendarNameQuery(t)
                 val calendarInfo = nameQuery?.let { resolveCalendarFilter(it) }
-                val events = integrations.calendar.eventsInRange(period.fromMillis, period.toMillis, limit, calendarId = calendarInfo?.id)
+                val events = integrations.calendar.eventsInRange(
+                    period.fromMillis, period.toMillis, limit,
+                    calendarId = calendarInfo?.id,
+                    calendarIds = if (calendarInfo == null) visibleCalendarIdsOrNull() else null,
+                )
                 val label = if (calendarInfo != null) "${period.label} — ${calendarInfo.displayName}" else period.label
                 if (events.isEmpty()) {
                     val extra = if (nameQuery != null && calendarInfo == null) " (aucun calendrier trouvé pour « $nameQuery » — dis \"liste les calendriers\" pour voir les noms disponibles)" else ""
@@ -259,12 +264,20 @@ class CommandRouter(
                 }
             },
             Matcher(Regex("""(liste|montre|affiche|quels?).*calendriers?""")) {
-                val calendars = integrations.calendar.listCalendars()
-                if (calendars.isEmpty()) {
+                // listCalendarGroups() deduplique les entrees identiques (meme nom +
+                // meme compte) -- voir task #308 : sans ca, un calendrier synchronise
+                // par plusieurs comptes/applis apparaissait plusieurs fois dans cette
+                // meme reponse, exactement le "certains sont en double" signale.
+                val groups = integrations.calendar.listCalendarGroups()
+                val visibleIds = visibleCalendarIdsOrNull() // null = rien de masque, tout est affiche
+                if (groups.isEmpty()) {
                     CommandResult.Handled("Aucun calendrier trouvé (ou permission Agenda non accordée).")
                 } else {
                     CommandResult.Handled(
-                        "Calendriers disponibles : " + calendars.joinToString(", ") { "${it.displayName} (${it.accountName})" },
+                        "Calendriers disponibles : " + groups.joinToString(", ") { g ->
+                            val masque = visibleIds != null && g.ids.none { it in visibleIds }
+                            "${g.displayName} (${g.accountName})" + if (masque) " [masqué]" else ""
+                        } + " — modifiable dans Réglages > Calendriers affichés.",
                     )
                 }
             },
@@ -975,6 +988,23 @@ class CommandRouter(
         return calendars.firstOrNull {
             it.displayName.contains(resolvedName, ignoreCase = true) || it.accountName.contains(resolvedName, ignoreCase = true)
         }
+    }
+
+    /**
+     * Calendriers "affiches" par defaut dans le planning (task #308, Reglages
+     * -> section Calendriers affiches) : tous les calendriers du telephone
+     * MOINS ceux explicitement decoches par l'utilisateur (HIDDEN_CALENDAR_IDS,
+     * vide par defaut = comportement historique inchange, tous confondus).
+     * Renvoie null quand rien n'est masque, pour laisser eventsInRange sans
+     * clause de filtrage supplementaire dans le cas le plus courant.
+     */
+    private suspend fun visibleCalendarIdsOrNull(): Set<Long>? {
+        val hiddenRaw = settings.get(HIDDEN_CALENDAR_IDS).orEmpty()
+        if (hiddenRaw.isBlank()) return null
+        val hidden = hiddenRaw.split(",").mapNotNull { it.trim().toLongOrNull() }.toSet()
+        if (hidden.isEmpty()) return null
+        val allIds = integrations.calendar.listCalendars().map { it.id }.toSet()
+        return allIds - hidden
     }
 
     /** Surnoms de calendrier enregistres (voir le matcher "surnomme le calendrier ... en ..."), sous forme surnom (minuscule) -> vrai nom. */
