@@ -125,8 +125,24 @@ jobs:
           ls -la "$NDK_VULKAN_DIR"
           echo "--- Remplacement complet par le jeu de headers du SDK LunarG hote ---"
           sudo cp -rv /usr/include/vulkan/. "$NDK_VULKAN_DIR/"
+          # 2e iteration : vulkan_core.h du SDK LunarG (plus recent) inclut a son tour
+          # "vk_video/vulkan_video_codec_av1std.h" etc. -- vk_video/ est un repertoire FRERE
+          # de vulkan/ dans l'arborescence Vulkan-Headers standard (pas imbrique dedans), donc
+          # non copie par la commande precedente : on le copie separement au meme niveau que
+          # vulkan/ dans le sysroot NDK (.../usr/include/vk_video), en le creant s'il n'existe
+          # pas deja (verifie via les logs bruts CI : "fatal error: 'vk_video/....h' file not
+          # found").
+          NDK_INCLUDE_DIR="$(dirname "$NDK_VULKAN_DIR")"
+          if [ -d /usr/include/vk_video ]; then
+            sudo mkdir -p "$NDK_INCLUDE_DIR/vk_video"
+            sudo cp -rv /usr/include/vk_video/. "$NDK_INCLUDE_DIR/vk_video/"
+          else
+            echo "::warning::/usr/include/vk_video introuvable cote hote -- le SDK LunarG installe ne le fournit peut-etre pas, la compilation risque de re-echouer sur ce meme header."
+          fi
           echo "--- Contenu final de $NDK_VULKAN_DIR ---"
           ls -la "$NDK_VULKAN_DIR"
+          echo "--- Contenu final de $NDK_INCLUDE_DIR/vk_video (si present) ---"
+          ls -la "$NDK_INCLUDE_DIR/vk_video" 2>/dev/null || true
 
       - name: Build Llamatik Android library AAR with Vulkan backend
         working-directory: llamatik-src
