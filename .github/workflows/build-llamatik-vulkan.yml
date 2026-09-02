@@ -125,24 +125,29 @@ jobs:
           ls -la "$NDK_VULKAN_DIR"
           echo "--- Remplacement complet par le jeu de headers du SDK LunarG hote ---"
           sudo cp -rv /usr/include/vulkan/. "$NDK_VULKAN_DIR/"
-          # 2e iteration : vulkan_core.h du SDK LunarG (plus recent) inclut a son tour
-          # "vk_video/vulkan_video_codec_av1std.h" etc. -- vk_video/ est un repertoire FRERE
-          # de vulkan/ dans l'arborescence Vulkan-Headers standard (pas imbrique dedans), donc
-          # non copie par la commande precedente : on le copie separement au meme niveau que
-          # vulkan/ dans le sysroot NDK (.../usr/include/vk_video), en le creant s'il n'existe
-          # pas deja (verifie via les logs bruts CI : "fatal error: 'vk_video/....h' file not
-          # found").
+          # Iterations suivantes : au fur et a mesure des essais CI, plusieurs repertoires
+          # FRERES de vulkan/ (pas imbriques dedans) se sont reveles necessaires un par un --
+          # vk_video/ (inclus par vulkan_core.h : "fatal error: 'vk_video/....h' file not
+          # found"), puis spirv/ (inclus par le code des shaders generes ggml-vulkan :
+          # "fatal error: 'spirv/unified1/spirv.hpp' file not found"). Plutot que de continuer
+          # a ajouter ces repertoires un par un a chaque nouvel echec CI, on copie maintenant
+          # TOUS les repertoires d'entetes lies a Vulkan/SPIRV que le paquet vulkan-sdk de
+          # LunarG installe sous /usr/include, de facon generique -- copie chacun s'il existe,
+          # ignore silencieusement sinon (evite un nouvel aller-retour CI par header manquant).
           NDK_INCLUDE_DIR="$(dirname "$NDK_VULKAN_DIR")"
-          if [ -d /usr/include/vk_video ]; then
-            sudo mkdir -p "$NDK_INCLUDE_DIR/vk_video"
-            sudo cp -rv /usr/include/vk_video/. "$NDK_INCLUDE_DIR/vk_video/"
-          else
-            echo "::warning::/usr/include/vk_video introuvable cote hote -- le SDK LunarG installe ne le fournit peut-etre pas, la compilation risque de re-echouer sur ce meme header."
-          fi
+          for extra_dir in vk_video spirv spirv-tools spirv_cross glslang shaderc; do
+            if [ -d "/usr/include/$extra_dir" ]; then
+              echo "--- Copie de /usr/include/$extra_dir vers $NDK_INCLUDE_DIR/$extra_dir ---"
+              sudo mkdir -p "$NDK_INCLUDE_DIR/$extra_dir"
+              sudo cp -rv "/usr/include/$extra_dir/." "$NDK_INCLUDE_DIR/$extra_dir/"
+            fi
+          done
           echo "--- Contenu final de $NDK_VULKAN_DIR ---"
           ls -la "$NDK_VULKAN_DIR"
-          echo "--- Contenu final de $NDK_INCLUDE_DIR/vk_video (si present) ---"
-          ls -la "$NDK_INCLUDE_DIR/vk_video" 2>/dev/null || true
+          echo "--- Repertoires additionnels presents dans $NDK_INCLUDE_DIR apres copie ---"
+          for extra_dir in vk_video spirv spirv-tools spirv_cross glslang shaderc; do
+            [ -d "$NDK_INCLUDE_DIR/$extra_dir" ] && echo "  present: $extra_dir"
+          done
 
       - name: Build Llamatik Android library AAR with Vulkan backend
         working-directory: llamatik-src
