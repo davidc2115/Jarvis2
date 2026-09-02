@@ -84,6 +84,38 @@ jobs:
           sed -i 's/abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")/abiFilters += setOf("arm64-v8a")/' llamatik-src/library/build.gradle.kts
           grep -n "abiFilters" llamatik-src/library/build.gradle.kts
 
+      - name: Copier vulkan.hpp (bindings C++) dans le sysroot du NDK
+        # Le NDK Android fournit vulkan/vulkan.h (API C, pour lier libvulkan.so) mais pas
+        # vulkan/vulkan.hpp (bindings C++ que ggml-vulkan.cpp inclut) -- voir les commentaires
+        # detailles sur l'etape de build ci-dessous pour l'historique des tentatives
+        # precedentes (CMAKE_FIND_ROOT_PATH_MODE=BOTH, puis -DVulkan_INCLUDE_DIR=/usr/include)
+        # qui n'ont pas fonctionne : le repertoire vulkan/ du sysroot NDK est deja sur le
+        # chemin d'include implicite du compilateur (via --sysroot), donc find_path() y
+        # trouve vulkan.h en premier quoi qu'on fasse cote CMake. Solution directe : on
+        # complete ce meme repertoire avec le(s) header(s) C++ manquant(s), copies depuis le
+        # SDK Vulkan LunarG installe cote hote (etape precedente) -- le compilateur les
+        # trouvera alors exactement la ou il trouve deja vulkan.h avec succes.
+        run: |
+          set -e
+          NDK_VULKAN_DIR=$(find /usr/local/lib/android/sdk/ndk -maxdepth 8 -type d -path "*/sysroot/usr/include/vulkan" | head -n 1)
+          if [ -z "$NDK_VULKAN_DIR" ]; then
+            echo "::error::Repertoire vulkan/ introuvable dans le sysroot du NDK -- structure NDK inattendue ?"
+            find /usr/local/lib/android/sdk/ndk -maxdepth 6 -iname "vulkan*" || true
+            exit 1
+          fi
+          echo "Repertoire vulkan/ du sysroot NDK : $NDK_VULKAN_DIR"
+          ls -la "$NDK_VULKAN_DIR"
+          sudo cp -v /usr/include/vulkan/vulkan.hpp "$NDK_VULKAN_DIR/"
+          # Versions recentes de Vulkan-Hpp eclatent les bindings en plusieurs fichiers
+          # (vulkan_structs.hpp, vulkan_funcs.hpp, vulkan_handles.hpp, vulkan_enums.hpp,
+          # vulkan_raii.hpp, vulkan_hash.hpp, ...) que vulkan.hpp inclut en cascade --
+          # on les copie tous s'ils existent, silencieusement sinon (vieille version SDK).
+          for f in /usr/include/vulkan/vulkan_*.hpp; do
+            [ -e "$f" ] && sudo cp -v "$f" "$NDK_VULKAN_DIR/"
+          done
+          echo "--- Contenu final de $NDK_VULKAN_DIR ---"
+          ls -la "$NDK_VULKAN_DIR"
+
       - name: Build Llamatik Android library AAR with Vulkan backend
         working-directory: llamatik-src
         # CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH est indispensable ici : le toolchain
@@ -103,19 +135,29 @@ jobs:
         # vulkan/vulkan.hpp (bindings C++ que ggml-vulkan.cpp inclut), qui vient du SDK
         # Vulkan hote -- d'ou "fatal error: vulkan/vulkan.hpp file not found" sans ce flag.
         #
-        # INCLUDE=BOTH s'est revele INSUFFISANT (meme erreur persistante sur les runs
-        # suivants, verifie via les logs bruts CI) : BOTH ajoute simplement le chemin hote
-        # comme option de recherche SUPPLEMENTAIRE, il ne le priorise pas. Or find_path()
-        # pour vulkan/vulkan.h reussit DEJA trivialement dans le sysroot du NDK (qui est
-        # toujours le chemin racine principal, quel que soit FIND_ROOT_PATH_MODE) --
-        # celui-ci fournit bien vulkan/vulkan.h (pour lier libvulkan.so d'Android) mais PAS
-        # vulkan/vulkan.hpp. Comme find_path() s'arrete au premier repertoire ou le header
-        # recherche existe, il retourne le repertoire du NDK et ne va jamais chercher plus
-        # loin cote hote -- meme avec BOTH. On force donc directement la variable de cache
-        # CMake Vulkan_INCLUDE_DIR vers /usr/include (ou le SDK LunarG installe ses headers,
-        # y compris vulkan.hpp), ce qui court-circuite entierement l'auto-detection
-        # find_path() plutot que d'essayer de l'influencer.
-        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DVulkan_INCLUDE_DIR=/usr/include" --stacktrace
+        # INCLUDE=BOTH s'est revele INSUFFISANT (meme erreur persistante, verifie via les
+        # logs bruts CI) : BOTH ajoute simplement le chemin hote comme option de recherche
+        # SUPPLEMENTAIRE, il ne le priorise pas. Or find_path() pour vulkan/vulkan.h reussit
+        # DEJA trivialement dans le sysroot du NDK (qui est toujours le chemin racine
+        # principal, quel que soit FIND_ROOT_PATH_MODE) -- celui-ci fournit bien
+        # vulkan/vulkan.h (pour lier libvulkan.so d'Android) mais PAS vulkan/vulkan.hpp.
+        #
+        # Tentative suivante -- pre-seeder la variable de cache CMake -DVulkan_INCLUDE_DIR=
+        # /usr/include -- s'est AUSSI revelee inefficace (meme erreur, verifie a nouveau via
+        # les logs bruts) : la commande de compilation clang++ capturee ne contient TOUJOURS
+        # aucun -I pointant vers /usr/include, alors que le flag est bien transmis a gradle/
+        # cmake (confirme present dans le log). Cause la plus probable : le repertoire
+        # vulkan/ du sysroot NDK fait deja partie du chemin d'include IMPLICITE du
+        # compilateur (via --sysroot=...), donc meme si Vulkan_INCLUDE_DIR pointait vers
+        # /usr/include, aucun -I explicite n'est necessaire/genere pour le sysroot NDK --
+        # et le header vulkan.h y est trouve en premier de toute facon avant que la
+        # substitution ne puisse avoir d'effet observable sur cette compilation precise.
+        #
+        # Fix retenu (voir etape suivante "Copier vulkan.hpp...") : plutot que de lutter
+        # contre la resolution CMake, on complete directement le sysroot du NDK en y copiant
+        # le header C++ manquant depuis le SDK LunarG hote -- le NDK le trouvera alors
+        # exactement la ou il cherche deja avec succes pour vulkan.h.
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH" --stacktrace
 
       - name: Locate the built AAR
         id: locate
