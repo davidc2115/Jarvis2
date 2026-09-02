@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
+import com.jarvis2.app.ai.GEMINI_CLOUD_API_KEY
+import com.jarvis2.app.ai.GROQ_API_KEY
 import com.jarvis2.app.data.SettingsDataStore
 import com.jarvis2.app.integrations.GoogleAuthController
 import com.jarvis2.app.integrations.GoogleAuthNeedsUserActionException
@@ -73,6 +75,15 @@ val TTS_ENABLED = stringPreferencesKey("tts_enabled")
 data class SettingsUiState(
     val engine: EngineInfo? = null,
     val webSearchApiKey: String = "",
+    // Cascade IA cloud gratuite (task #313/#315, voir ai/CloudAiClient.kt) :
+    // en renseignant l'une des deux cles ci-dessous (Groq en priorite, ou
+    // Gemini cloud seul/en repli), Jarvis comprend le langage naturel libre
+    // (creation de fiches contact, notes, memorisation de preferences) au
+    // lieu de se limiter aux phrases reconnues par les regex locales.
+    // Aucune des deux n'est requise : sans cle, l'app reste 100% locale/
+    // hors-ligne comme avant.
+    val groqApiKey: String = "",
+    val geminiCloudApiKey: String = "",
     val preferredEngineId: String = "auto",
     val selectedLocalModel: String = "none",
     val isDownloadingLocalModel: Boolean = false,
@@ -106,6 +117,8 @@ class SettingsViewModel(
             _state.value = _state.value.copy(
                 engine = engineManager.ensureReady(),
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
+                groqApiKey = settings.get(GROQ_API_KEY).orEmpty(),
+                geminiCloudApiKey = settings.get(GEMINI_CLOUD_API_KEY).orEmpty(),
                 preferredEngineId = settings.get(PREFERRED_ENGINE_ID) ?: "auto",
                 selectedLocalModel = settings.get(SELECTED_LOCAL_MODEL) ?: "none",
                 bubbleShape = settings.get(BUBBLE_SHAPE) ?: "rounded",
@@ -139,6 +152,18 @@ class SettingsViewModel(
     fun setWebSearchApiKey(key: String) = viewModelScope.launch {
         settings.set(WEB_SEARCH_API_KEY, key)
         _state.value = _state.value.copy(webSearchApiKey = key)
+    }
+
+    /** Cle Groq (console.groq.com, gratuite, sans carte bancaire) -- priorite dans CloudAiClient.send(). */
+    fun setGroqApiKey(key: String) = viewModelScope.launch {
+        settings.set(GROQ_API_KEY, key)
+        _state.value = _state.value.copy(groqApiKey = key)
+    }
+
+    /** Cle Gemini cloud (aistudio.google.com, gratuite) -- repli si Groq absent/en echec. */
+    fun setGeminiCloudApiKey(key: String) = viewModelScope.launch {
+        settings.set(GEMINI_CLOUD_API_KEY, key)
+        _state.value = _state.value.copy(geminiCloudApiKey = key)
     }
 
     /**

@@ -79,6 +79,8 @@ class CommandRouter(
         const val PREF_NOTE_WEBSEARCH = "Preference presentation recherche web"
         const val PREF_NOTE_CONTACT_FICHE = "Preference presentation fiche contact"
         const val PREF_NOTE_CALENDAR_NICKNAMES = "Surnoms calendrier"
+        /** Note "second brain" relue EN ENTIER a chaque envoi cloud (voir ChatViewModel) -- distincte de MemoryStore (Room, TF-IDF, releve seulement par mot-cle). */
+        const val MEMORY_NOTE_TITLE = "Mémoire JARVIS"
 
         /**
          * Mots qui suivent "planning de"/"agenda de" mais qui designent une
@@ -104,6 +106,30 @@ class CommandRouter(
             }
         }
         return CommandResult.NotACommand
+    }
+
+    /**
+     * Point d'entree pour une commande d'ACTION emise par l'IA cloud (voir
+     * JarvisCommandParser + ChatViewModel.CLOUD_SYSTEM_PROMPT, task #314) --
+     * distinct de [route] qui matche des PHRASES completes par regex.
+     * Reutilise les memes briques (vault, presentation, memoire...) mais
+     * pilotees par des parametres deja structures (JSON) plutot que par
+     * extraction depuis du texte libre : beaucoup plus fiable pour une IA
+     * qui a compris la demande mais dont la formulation exacte ne
+     * matcherait aucune regex de [route] -- exactement le signalement
+     * utilisateur "qu'il puisse créer des fiches contact, des notes...
+     * comme un vrai assistant".
+     */
+    suspend fun executeAction(action: String, params: Map<String, String>): CommandResult = when (action) {
+        "save_contact_profile" -> saveContactProfileFromParams(params)
+        "obsidian_create_note", "create_note" -> createNoteFromParams(params)
+        "set_contact_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACTS, "des contacts", params["style"])
+        "set_calendar_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_PLANNING, "du planning", params["style"])
+        "set_websearch_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_WEBSEARCH, "de la recherche web", params["style"])
+        "set_contact_fiche_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACT_FICHE, "des fiches contact", params["style"])
+        "remember_fact" -> rememberFact(params["fact"])
+        "forget_fact" -> forgetFact(params["query"])
+        else -> CommandResult.Handled("Action « $action » pas encore prise en charge côté Jarvis2.")
     }
 
     private data class Matcher(val pattern: Regex, val action: suspend (String) -> CommandResult)
@@ -935,6 +961,117 @@ class CommandRouter(
         )
         vault.saveNote(note)
     }
+
+    /** Variante de [handleSavePresentationInstruction] pilotee par un parametre deja extrait (JARVIS_CMD), sans avoir besoin d'un "..." suivi de ":" dans le texte. */
+    private suspend fun savePresentationInstructionDirect(noteTitle: String, label: String, instruction: String?): CommandResult {
+        if (instruction.isNullOrBlank()) return CommandResult.Handled("Décris la présentation voulue pour $label.")
+        savePresentationInstruction(noteTitle, instruction.replaceFirstChar { it.uppercase() })
+        return CommandResult.Handled("Présentation $label enregistrée dans le vault. Je l'appliquerai à chaque fois.")
+    }
+
+    // ============================================================
+    // Actions pilotees par l'IA cloud (task #314) : save_contact_profile,
+    // obsidian_create_note, remember_fact/forget_fact. Voir executeAction()
+    // plus haut et ChatViewModel.CLOUD_SYSTEM_PROMPT pour le contexte complet.
+    // ============================================================
+
+    /**
+     * Cree OU met a jour une fiche contact dans le vault a partir de champs
+     * fournis par l'IA cloud -- contrairement au matcher local "cree une
+     * fiche contact" (createContactFicheNote, plus haut), ne necessite PAS
+     * de contact deja existant dans le carnet telephone : peut etre rempli
+     * entierement depuis la conversation ("Paul, mon collègue, 0612345678"),
+     * comme le faisait save_contact_profile dans l'ancienne Newjarvis.
+     * Fusionne avec une fiche existante du meme nom (un champ absent des
+     * params ne l'efface jamais).
+     */
+    private suspend fun saveContactProfileFromParams(params: Map<String, String>): CommandResult {
+        val name = params["name"]?.trim()
+        if (name.isNullOrBlank()) return CommandResult.Handled("Précise le nom du contact.")
+        vault.createFolder("Contacts")
+        val existing = vault.listNotes().find { it.folderPath == "Contacts" && it.title.equals(name, ignoreCase = true) }
+        val fm = (existing?.frontmatter ?: emptyMap()).toMutableMap()
+        fm["tags"] = "contact"
+        val fields = linkedMapOf(
+            "category" to "categorie", "nickname" to "surnom", "phone" to "telephone", "phonePro" to "telephone_pro",
+            "email" to "email", "address" to "adresse", "addressPro" to "adresse_pro", "birthday" to "anniversaire",
+            "company" to "entreprise", "position" to "poste",
+        )
+        fields.forEach { (paramKey, fmKey) -> params[paramKey]?.takeIf { it.isNotBlank() }?.let { fm[fmKey] = it } }
+        val notes = params["notes"]?.takeIf { it.isNotBlank() } ?: fm["notes_libres"]
+        if (!params["notes"].isNullOrBlank()) fm["notes_libres"] = params.getValue("notes")
+        val body = buildString {
+            appendLine("# $name")
+            appendLine()
+            appendLine("## ☎️ Coordonnées")
+            fields.forEach { (_, fmKey) -> fm[fmKey]?.let { appendLine("- **${fmKey.replace('_', ' ').replaceFirstChar { c -> c.uppercase() }}** : $it") } }
+            appendLine()
+            appendLine("## 📝 Notes")
+            appendLine()
+            if (!notes.isNullOrBlank()) appendLine(notes)
+        }.trim()
+        val note = Note(
+            fileName = existing?.fileName ?: "${name.replace(Regex("[\\/:*?\"<>|]"), "-")}.md",
+            title = name,
+            body = vault.autoLink(body, excludeTitle = name),
+            frontmatter = fm,
+            tags = setOf("contact"),
+            links = existing?.links ?: emptySet(),
+            folderPath = "Contacts",
+        )
+        vault.saveNote(note)
+        return CommandResult.Handled("Fiche « $name » ${if (existing == null) "créée" else "mise à jour"} dans le vault (dossier Contacts).")
+    }
+
+    /** Cree une note structuree (title/content/folder deja extraits par l'IA cloud, pas de regex a matcher). */
+    private suspend fun createNoteFromParams(params: Map<String, String>): CommandResult {
+        val title = params["title"]?.trim()?.takeIf { it.isNotBlank() } ?: "Note Jarvis"
+        val content = params["content"].orEmpty()
+        val folder = params["folder"].orEmpty()
+        val body = vault.autoLink(content, excludeTitle = title)
+        val note = vault.createNote(title, body = body, folderPath = folder)
+        val where = if (folder.isBlank()) "dans le vault Obsidian" else "dans le dossier « $folder » du vault"
+        return CommandResult.Handled("Note « ${note.title} » créée $where.")
+    }
+
+    /**
+     * Ajoute un fait durable a la note speciale [MEMORY_NOTE_TITLE], relue
+     * EN ENTIER a chaque envoi cloud (voir ChatViewModel.buildCloudSystemPrompt)
+     * -- distinct de MemoryStore (Room, TF-IDF, ne remonte que par mot-cle).
+     * C'est ce qui evite de tout redemander a chaque nouvelle conversation.
+     */
+    private suspend fun rememberFact(fact: String?): CommandResult {
+        if (fact.isNullOrBlank()) return CommandResult.Handled("Précise ce qu'il faut retenir.")
+        val existing = vault.findByTitleOrFileName(MEMORY_NOTE_TITLE)
+        val lines = existing?.body?.lines()?.filter { it.isNotBlank() }?.toMutableList() ?: mutableListOf()
+        lines.add("- $fact")
+        val note = Note(
+            fileName = existing?.fileName ?: "${MEMORY_NOTE_TITLE.replace(Regex("[\\/:*?\"<>|]"), "-")}.md",
+            title = MEMORY_NOTE_TITLE,
+            body = lines.joinToString("\n"),
+            frontmatter = existing?.frontmatter ?: emptyMap(),
+            tags = existing?.tags ?: emptySet(),
+            links = existing?.links ?: emptySet(),
+        )
+        vault.saveNote(note)
+        return CommandResult.Handled("Retenu : $fact")
+    }
+
+    /** Retire les faits de [MEMORY_NOTE_TITLE] qui contiennent [query] (ex: "oublie que je travaille chez X"). */
+    private suspend fun forgetFact(query: String?): CommandResult {
+        if (query.isNullOrBlank()) return CommandResult.Handled("Précise quel fait oublier.")
+        val existing = vault.findByTitleOrFileName(MEMORY_NOTE_TITLE)
+            ?: return CommandResult.Handled("Aucun fait mémorisé pour l'instant.")
+        val lines = existing.body.lines().toMutableList()
+        val before = lines.size
+        lines.removeAll { it.contains(query, ignoreCase = true) }
+        if (lines.size == before) return CommandResult.Handled("Aucun fait mémorisé ne correspond à « $query ».")
+        vault.saveNote(existing.copy(body = lines.joinToString("\n")))
+        return CommandResult.Handled("Fait(s) correspondant à « $query » oublié(s).")
+    }
+
+    /** Lu par ChatViewModel avant chaque envoi cloud pour l'injecter dans le system prompt (voir [MEMORY_NOTE_TITLE]). */
+    suspend fun loadMemoryNote(): String? = vault.findByTitleOrFileName(MEMORY_NOTE_TITLE)?.body?.trim()?.takeIf { it.isNotBlank() }
 
     /**
      * Fait rediger le rendu final par le moteur IA local en lui donnant les

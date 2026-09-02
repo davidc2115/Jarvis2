@@ -43,6 +43,8 @@ import org.koin.androidx.compose.koinViewModel
 fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     var apiKeyField by remember(state.webSearchApiKey) { mutableStateOf(state.webSearchApiKey) }
+    var groqKeyField by remember(state.groqApiKey) { mutableStateOf(state.groqApiKey) }
+    var geminiCloudKeyField by remember(state.geminiCloudApiKey) { mutableStateOf(state.geminiCloudApiKey) }
 
     // Lance l'ecran de consentement Google quand GoogleAuthController signale qu'il en
     // faut un (voir SettingsViewModel.connectGmail/pendingGmailAuthIntent) ; le resultat
@@ -135,6 +137,32 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             Button(onClick = { viewModel.setWebSearchApiKey(apiKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("IA cloud gratuite (compréhension avancée)", style = MaterialTheme.typography.titleLarge, color = JarvisGold)
+            Text(
+                "Optionnel. Permet à Jarvis de comprendre le langage naturel libre (créer une fiche " +
+                    "contact, une note, retenir une préférence...) au lieu de se limiter aux phrases " +
+                    "reconnues localement. Sans clé, Jarvis reste 100% local/hors-ligne comme avant. " +
+                    "Groq est utilisé en priorité (gratuit, sans carte bancaire : console.groq.com), " +
+                    "Gemini cloud en repli (gratuit : aistudio.google.com).",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            OutlinedTextField(
+                value = groqKeyField,
+                onValueChange = { groqKeyField = it },
+                label = { Text("Clé API Groq") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Button(onClick = { viewModel.setGroqApiKey(groqKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+            OutlinedTextField(
+                value = geminiCloudKeyField,
+                onValueChange = { geminiCloudKeyField = it },
+                label = { Text("Clé API Gemini cloud (repli)") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Button(onClick = { viewModel.setGeminiCloudApiKey(geminiCloudKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

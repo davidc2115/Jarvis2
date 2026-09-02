@@ -3,9 +3,11 @@ package com.jarvis2.app.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
+import com.jarvis2.app.ai.CloudAiClient
 import com.jarvis2.app.ai.CommandRouter
 import com.jarvis2.app.ai.CommandResult
 import com.jarvis2.app.ai.EngineInfo
+import com.jarvis2.app.ai.JarvisCommandParser
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.TtsController
 import com.jarvis2.app.ai.Turn
@@ -49,6 +51,7 @@ class ChatViewModel(
     private val settings: SettingsDataStore,
     private val tts: TtsController,
     private val voiceMode: VoiceModeController,
+    private val cloudAiClient: CloudAiClient,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -113,11 +116,46 @@ class ChatViewModel(
                     _state.value = _state.value.copy(isThinking = false)
                     return@launch
                 }
-                CommandResult.NotACommand -> Unit // fall through to the LLM
+                CommandResult.NotACommand -> Unit // fall through to the cloud, then the local LLM
             }
 
-            // 2. Otherwise, ordinary conversation via the local LLM, augmented
-            //    with anything relevant from memory (see ai/MemoryStore.kt).
+            // 2. Si une clé Groq/Gemini est configurée (voir Réglages), on tente
+            //    de faire comprendre la demande par l'IA cloud AVANT le modèle
+            //    local : c'est elle qui peut créer des fiches contact, des notes,
+            //    ou retenir des préférences de présentation à partir de langage
+            //    naturel libre, via un bloc [JARVIS_CMD:{...}] (voir
+            //    JarvisCommandParser + CommandRouter.executeAction). Best-effort :
+            //    en cas d'échec (pas de clé, pas de réseau, quota dépassé), on
+            //    retombe silencieusement sur le moteur local à l'étape 3, l'app
+            //    reste donc pleinement utilisable hors-ligne comme avant.
+            if (cloudAiClient.isConfigured()) {
+                val cloudHistory = _state.value.messages.map { Turn(it.role, it.text) }
+                val memoryNote = commandRouter.loadMemoryNote()
+                val systemPrompt = buildCloudSystemPrompt(memoryNote)
+                val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text)
+                cloudResult.onSuccess { rawReply ->
+                    val (cleanText, command) = JarvisCommandParser.parse(rawReply)
+                    val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
+                    val reply = when (actionFeedback) {
+                        is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText
+
+${actionFeedback.feedback}"
+                        is CommandResult.NeedsPermission -> actionFeedback.feedback
+                        else -> cleanText.ifBlank { "D'accord." }
+                    }
+                    appendMessage(Turn.Role.ASSISTANT, reply)
+                    maybeSpeak(reply)
+                    memoryStore.remember("$text -> $reply", source = if (command != null) "cloud_action" else "cloud_chat")
+                    refreshPresentationPrefs()
+                    _state.value = _state.value.copy(isThinking = false)
+                    return@launch
+                }
+                // cloudResult.isFailure -> pas de clé valide / réseau / quota :
+                // on continue vers l'étape 3 (modèle local) sans rien afficher.
+            }
+
+            // 3. Sinon (ou en repli si le cloud a échoué), conversation via le
+            //    LLM local, augmentée avec la mémoire pertinente (ai/MemoryStore.kt).
             val history = _state.value.messages.map { Turn(it.role, it.text) }
             val memories = memoryStore.relevant(text)
             val augmentedPrompt = if (memories.isEmpty()) text else buildString {
@@ -202,6 +240,46 @@ class ChatViewModel(
                 appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : ${error.message}")
             }
             _state.value = _state.value.copy(isThinking = false)
+        }
+    }
+
+    /**
+     * Reprend le principe du SYSTEM_PROMPT de l'ancienne Newjarvis (voir
+     * ApiClient.kt de ce depot) mais limite volontairement au sous-ensemble
+     * d'actions demande par l'utilisateur (fiches contact, notes, memoire,
+     * preferences de presentation) -- pas de GitHub/domotique/fichiers/etc.
+     * comme dans l'ancienne version, ce n'est pas ce qui a ete demande ici.
+     * [memoryNote] est le contenu integral de la note "Mémoire JARVIS" du
+     * vault (voir CommandRouter.MEMORY_NOTE_TITLE / rememberFact) : relu et
+     * injecte a chaque envoi pour eviter de tout redemander a l'utilisateur.
+     */
+    private fun buildCloudSystemPrompt(memoryNote: String?): String = buildString {
+        appendLine(
+            "Tu es Jarvis, l'assistant personnel Android de l'utilisateur. Réponds toujours en français, " +
+                "de façon naturelle et concise, comme le ferait un vrai assistant.",
+        )
+        appendLine()
+        appendLine(
+            "Si le message de l'utilisateur demande une des actions suivantes, termine ta réponse (après le " +
+                "texte que tu veux afficher à l'utilisateur, ou seul si aucun texte n'est nécessaire) par UN SEUL " +
+                "bloc au format exact [JARVIS_CMD:{"action":"NOM_ACTION",...}] (JSON valide sur une seule ligne). " +
+                "Ce bloc est retiré automatiquement avant affichage, n'en parle jamais à l'utilisateur.",
+        )
+        appendLine()
+        appendLine("Actions disponibles :")
+        appendLine("- save_contact_profile : créer/mettre à jour une fiche contact. Params : name (obligatoire), " +
+            "category, nickname, phone, phonePro, email, address, addressPro, birthday, company, position, notes.")
+        appendLine("- obsidian_create_note : créer une note dans le vault Obsidian. Params : title, content, folder (optionnel).")
+        appendLine("- remember_fact : mémoriser durablement un fait sur l'utilisateur ou ses préférences. Params : fact.")
+        appendLine("- forget_fact : oublier un fait mémorisé précédemment. Params : query (mots-clés du fait à oublier).")
+        appendLine("- set_contact_presentation_style : mémoriser comment présenter la liste des contacts. Params : style.")
+        appendLine("- set_calendar_presentation_style : mémoriser comment présenter le planning/calendrier. Params : style.")
+        appendLine("- set_websearch_presentation_style : mémoriser comment présenter les résultats de recherche web. Params : style.")
+        appendLine("- set_contact_fiche_presentation_style : mémoriser comment présenter une fiche contact. Params : style.")
+        if (!memoryNote.isNullOrBlank()) {
+            appendLine()
+            appendLine("Faits déjà mémorisés sur l'utilisateur (note « Mémoire JARVIS ») :")
+            appendLine(memoryNote)
         }
     }
 

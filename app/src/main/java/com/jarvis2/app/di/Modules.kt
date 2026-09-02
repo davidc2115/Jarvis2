@@ -2,6 +2,7 @@ package com.jarvis2.app.di
 
 import androidx.room.Room
 import com.jarvis2.app.ai.AiEngineManager
+import com.jarvis2.app.ai.CloudAiClient
 import com.jarvis2.app.ai.CommandRouter
 import com.jarvis2.app.ai.MemoryStore
 import com.jarvis2.app.ai.WebSearchTool
@@ -54,6 +55,7 @@ val aiModule = module {
     single { MemoryStore(get()) }
     single { WebSearchTool(androidContext(), get()) }
     single { CommandRouter(get(), get(), get(), get(), get(), get()) }
+    single { CloudAiClient(androidContext(), get()) }
 }
 
 val integrationsModule = module {
@@ -84,7 +86,7 @@ val integrationsModule = module {
 }
 
 val viewModelModule = module {
-    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { VaultViewModel(get()) }
     viewModel { GraphViewModel(get()) }
     viewModel { IntegrationsViewModel(get()) }
