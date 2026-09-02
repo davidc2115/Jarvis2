@@ -194,6 +194,14 @@ class SelectableLlmEngine(
             LlamaBridge.shutdown()
             ready = false
         }
+        // Sans ca, apres un release() le champ restait sur l'ancien modele
+        // charge (ex: Qwen) alors que le contexte natif est deja libere --
+        // inoffensif tant que [ready] gate bien tous les appels, mais
+        // trompeur pour un futur lecteur/debug (voir task #321 : crash au
+        // changement de modele, cause reelle = AiEngineManager.refresh()
+        // sans verrou -- voir sa doc -- pas ce champ, mais autant le garder
+        // propre puisqu'on est dans ce fichier).
+        loadedModel = null
     }
 
     /** Signal interne "rien a faire" -- pas une vraie erreur, ne doit pas remplir [lastError]. */

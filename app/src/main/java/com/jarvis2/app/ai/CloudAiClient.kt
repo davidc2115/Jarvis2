@@ -154,7 +154,16 @@ class CloudAiClient(
         }
         messages.put(JSONObject().put("role", "user").put("content", userText))
         val body = JSONObject().apply {
-            put("model", "llama-3.3-70b-versatile")
+            // "llama-3.3-70b-versatile" a ete decommissionne cote Groq le
+            // 16/08/2026 (voir console.groq.com/docs/deprecations) -- toutes
+            // les requetes lui repondaient HTTP 400/404 "model_decommissioned",
+            // ce qui faisait echouer CHAQUE appel Groq (peu importe le nombre
+            // de cles configurees) et retombait donc systematiquement sur
+            // l'IA locale malgre des cles valides. Remplace par
+            // "openai/gpt-oss-120b" (modele de production recommande par
+            // Groq en remplacement, ~500 tok/s, gratuit sur le tier
+            // developpeur sans carte bancaire, voir console.groq.com/docs/models).
+            put("model", "openai/gpt-oss-120b")
             put("messages", messages)
             put("temperature", 0.4)
             put("max_tokens", 1024)

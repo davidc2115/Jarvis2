@@ -78,50 +78,57 @@ class AiEngineManager(private val context: Context, private val settings: Settin
 
     private var current: LocalAiEngine? = null
 
-    // Protege le corps de ensureReady() contre les appels concurrents. Sans
-    // ca, ChatViewModel.init lance ensureReady() en arriere-plan des
-    // l'ouverture de l'ecran Chat, et si l'utilisateur envoie un message
-    // avant la fin (generate() appelle aussi ensureReady() si current ==
-    // null), deux appels a prepare()/telechargement pouvaient s'executer en
-    // parallele sur le meme moteur (SmolVLM2 le plus souvent, puisque c'est
-    // le seul qui marche sur la plupart des telephones) -- deux ecritures
-    // simultanees dans le meme fichier .part pouvaient corrompre le modele
-    // et laisser l'utilisateur sans AUCUN moteur fonctionnel, expliquant en
-    // partie "impossible d'avoir une vraie conversation".
-    private val ensureReadyMutex = Mutex()
+    // Verrou UNIQUE protegeant toute operation touchant le contexte natif
+    // llama.cpp partage (voir doc de classe SelectableLlmEngine : "un seul
+    // contexte natif global cote SDK", partage entre SelectableLlmEngine et
+    // SmolVlmEngine). AVANT ce verrou, ensureReady()/generate()/refresh()
+    // pouvaient s'executer en parallele sur des coroutines independantes
+    // (typiquement ChatViewModel.viewModelScope pendant qu'une reponse est
+    // en cours de generation, et SettingsViewModel.viewModelScope quand
+    // l'utilisateur change de modele local dans Reglages) : refresh()
+    // appelait engine.release() -> LlamaBridge.shutdown() sur le MEME
+    // contexte natif qu'un generate() en cours utilisait encore sur l'autre
+    // coroutine, provoquant un crash natif (use-after-free JNI, non
+    // rattrapable par un try/catch Kotlin) -- exactement le symptome
+    // signale par l'utilisateur ("le changement de modele fait crash
+    // l'application"). Toutes les methodes publiques ci-dessous prennent ce
+    // meme verrou ; le corps reel vit dans des variantes *Locked() privees
+    // pour eviter tout appel imbrique (Mutex n'est pas reentrant).
+    private val engineMutex = Mutex()
 
     suspend fun ensureReady(): EngineInfo {
         current?.let { return it.info() }
+        return engineMutex.withLock { ensureReadyLocked() }
+    }
 
-        return ensureReadyMutex.withLock {
-            // Un autre appelant a peut-etre deja termine pendant qu'on
-            // attendait le verrou -- pas la peine de refaire tout le travail.
-            current?.let { return@withLock it.info() }
+    private suspend fun ensureReadyLocked(): EngineInfo {
+        // Un autre appelant a peut-etre deja termine pendant qu'on
+        // attendait le verrou -- pas la peine de refaire tout le travail.
+        current?.let { return it.info() }
 
-            val orderedChain = preferredFirstChain()
-            for (engine in orderedChain) {
-                // SmolVLM2's prepare() can take a while on first run (model
-                // download) -- surface an interim "downloading" status right
-                // away so the UI (which reads activeEngine.notes) doesn't sit on
-                // a stale "Initialisation…" the whole time.
+        val orderedChain = preferredFirstChain()
+        for (engine in orderedChain) {
+            // SmolVLM2's prepare() can take a while on first run (model
+            // download) -- surface an interim "downloading" status right
+            // away so the UI (which reads activeEngine.notes) doesn't sit on
+            // a stale "Initialisation…" the whole time.
+            _activeEngine.value = engine.info()
+            val result = engine.prepare()
+            if (result.isSuccess) {
+                current = engine
                 _activeEngine.value = engine.info()
-                val result = engine.prepare()
-                if (result.isSuccess) {
-                    current = engine
-                    _activeEngine.value = engine.info()
-                    return@withLock engine.info()
-                }
+                return engine.info()
             }
-
-            // Aucun moteur n'a reussi son prepare(): on retombe sur le dernier de
-            // la chaine (SmolVLM2, qui reussit quasiment toujours puisqu'il se
-            // telecharge lui-meme) pour que l'UI affiche un message utile plutot
-            // que de planter.
-            val last = engineChain.last()
-            current = last
-            _activeEngine.value = last.info()
-            last.info()
         }
+
+        // Aucun moteur n'a reussi son prepare(): on retombe sur le dernier de
+        // la chaine (SmolVLM2, qui reussit quasiment toujours puisqu'il se
+        // telecharge lui-meme) pour que l'UI affiche un message utile plutot
+        // que de planter.
+        val last = engineChain.last()
+        current = last
+        _activeEngine.value = last.info()
+        return last.info()
     }
 
     /**
@@ -137,42 +144,51 @@ class AiEngineManager(private val context: Context, private val settings: Settin
         return listOf(preferred) + engineChain.filter { it !== preferred }
     }
 
-    suspend fun generate(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Result<String> {
-        if (current == null) ensureReady()
-        val startIndex = current?.let { engineChain.indexOf(it) }?.coerceAtLeast(0) ?: 0
+    suspend fun generate(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Result<String> =
+        engineMutex.withLock {
+            if (current == null) ensureReadyLocked()
+            val startIndex = current?.let { engineChain.indexOf(it) }?.coerceAtLeast(0) ?: 0
 
-        var lastResult: Result<String>? = null
-        for (i in startIndex until engineChain.size) {
-            val engine = engineChain[i]
-            if (engine !== current) {
-                _activeEngine.value = engine.info()
-                val prep = engine.prepare()
-                if (prep.isFailure) {
-                    lastResult = Result.failure(prep.exceptionOrNull() ?: IllegalStateException("Moteur indisponible"))
-                    continue
+            var lastResult: Result<String>? = null
+            for (i in startIndex until engineChain.size) {
+                val engine = engineChain[i]
+                if (engine !== current) {
+                    _activeEngine.value = engine.info()
+                    val prep = engine.prepare()
+                    if (prep.isFailure) {
+                        lastResult = Result.failure(prep.exceptionOrNull() ?: IllegalStateException("Moteur indisponible"))
+                        continue
+                    }
+                    current = engine
+                    _activeEngine.value = engine.info()
                 }
-                current = engine
-                _activeEngine.value = engine.info()
+                val result = engine.generate(prompt, history, systemPrompt)
+                if (result.isSuccess) return@withLock result.mapCatching { deduplicateRepeatedSentences(it) }
+                lastResult = result
+                // echec a l'execution malgre prepare() reussi (voir doc de
+                // classe) -- on essaie le moteur suivant de la chaine.
             }
-            val result = engine.generate(prompt, history, systemPrompt)
-            if (result.isSuccess) return result.mapCatching { deduplicateRepeatedSentences(it) }
-            lastResult = result
-            // echec a l'execution malgre prepare() reussi (voir doc de
-            // classe) -- on essaie le moteur suivant de la chaine.
+            lastResult ?: Result.failure(IllegalStateException("Aucun moteur IA disponible"))
         }
-        return lastResult ?: Result.failure(IllegalStateException("Aucun moteur IA disponible"))
-    }
 
     fun generateStreaming(prompt: String, history: List<Turn>, systemPrompt: String = JARVIS_SYSTEM_PROMPT): Flow<String> {
         val engine = current ?: aiCore
         return engine.generateStreaming(prompt, history, systemPrompt).map { deduplicateRepeatedSentences(it) }
     }
 
-    /** Force a re-check, e.g. after the user imports/downloads a local model file in Settings. */
-    suspend fun refresh(): EngineInfo {
+    /**
+     * Force a re-check, e.g. after the user imports/downloads a local model
+     * file in Settings, OU change le modele GGUF selectionne
+     * (SelectableLlmEngine.prepare() ne recharge que si loadedModel differe
+     * -- voir sa doc). Prend [engineMutex] comme toute autre operation
+     * touchant le contexte natif partage, pour ne JAMAIS liberer/recharger
+     * le modele pendant qu'un generate() est en cours dessus (voir doc de
+     * [engineMutex] -- c'etait la cause du crash au changement de modele).
+     */
+    suspend fun refresh(): EngineInfo = engineMutex.withLock {
         current?.release()
         current = null
-        return ensureReady()
+        ensureReadyLocked()
     }
 
     fun release() {
