@@ -102,7 +102,20 @@ jobs:
         # a ONLY (sysroot NDK) par defaut. Le NDK fournit vulkan/vulkan.h (API C) mais pas
         # vulkan/vulkan.hpp (bindings C++ que ggml-vulkan.cpp inclut), qui vient du SDK
         # Vulkan hote -- d'ou "fatal error: vulkan/vulkan.hpp file not found" sans ce flag.
-        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH" --stacktrace
+        #
+        # INCLUDE=BOTH s'est revele INSUFFISANT (meme erreur persistante sur les runs
+        # suivants, verifie via les logs bruts CI) : BOTH ajoute simplement le chemin hote
+        # comme option de recherche SUPPLEMENTAIRE, il ne le priorise pas. Or find_path()
+        # pour vulkan/vulkan.h reussit DEJA trivialement dans le sysroot du NDK (qui est
+        # toujours le chemin racine principal, quel que soit FIND_ROOT_PATH_MODE) --
+        # celui-ci fournit bien vulkan/vulkan.h (pour lier libvulkan.so d'Android) mais PAS
+        # vulkan/vulkan.hpp. Comme find_path() s'arrete au premier repertoire ou le header
+        # recherche existe, il retourne le repertoire du NDK et ne va jamais chercher plus
+        # loin cote hote -- meme avec BOTH. On force donc directement la variable de cache
+        # CMake Vulkan_INCLUDE_DIR vers /usr/include (ou le SDK LunarG installe ses headers,
+        # y compris vulkan.hpp), ce qui court-circuite entierement l'auto-detection
+        # find_path() plutot que d'essayer de l'influencer.
+        run: ./gradlew :library:assembleRelease -Pllamatik.cmake.args="-DGGML_VULKAN=ON -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DVulkan_INCLUDE_DIR=/usr/include" --stacktrace
 
       - name: Locate the built AAR
         id: locate
