@@ -52,7 +52,14 @@ class ContactsRepository(private val context: Context) {
         }
     }
 
-    fun listContacts(limit: Int = 100): List<Contact> {
+    // Meme raison que CalendarRepository (voir sa doc) : listContacts() et
+    // les deux fonctions loadXById() ci-dessous n'etaient protegees par
+    // AUCUN try/catch alors qu'elles tournent a chaque commande "contact"
+    // -- une permission READ_CONTACTS revoquee ou un provider tiers en
+    // erreur faisait planter toute l'appli en pleine "reflexion" (task
+    // #326/#328). Degrade desormais vers une liste vide plutot que de
+    // crasher.
+    fun listContacts(limit: Int = 100): List<Contact> = runCatching {
         val phonesById = loadPhonesById()
         val emailsById = loadEmailsById()
 
@@ -63,9 +70,9 @@ class ContactsRepository(private val context: Context) {
         val cursor = context.contentResolver.query(
             ContactsContract.Contacts.CONTENT_URI, projection, null, null,
             "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} ASC",
-        ) ?: return emptyList()
+        ) ?: return@runCatching emptyList()
 
-        return cursor.use {
+        cursor.use {
             val result = mutableListOf<Contact>()
             while (it.moveToNext() && result.size < limit) {
                 val id = it.getString(0)
@@ -74,7 +81,7 @@ class ContactsRepository(private val context: Context) {
             }
             result
         }
-    }
+    }.getOrDefault(emptyList())
 
     /**
      * Pre-charge un id -> premier numero de telephone, en une seule requete
@@ -83,16 +90,16 @@ class ContactsRepository(private val context: Context) {
      * phone=null en dur, ce qui empechait toute presentation "detaillee"
      * (voir CommandRouter.formatContacts) d'afficher un vrai numero.
      */
-    private fun loadPhonesById(): Map<String, String> {
+    private fun loadPhonesById(): Map<String, String> = runCatching {
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
             ContactsContract.CommonDataKinds.Phone.NUMBER,
         )
         val cursor = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, null, null, null,
-        ) ?: return emptyMap()
+        ) ?: return@runCatching emptyMap()
 
-        return cursor.use {
+        cursor.use {
             val result = mutableMapOf<String, String>()
             while (it.moveToNext()) {
                 val contactId = it.getString(0) ?: continue
@@ -104,7 +111,7 @@ class ContactsRepository(private val context: Context) {
             }
             result
         }
-    }
+    }.getOrDefault(emptyMap())
 
     /**
      * Meme principe que [loadPhonesById] mais pour l'email -- ajoute apres
@@ -113,16 +120,16 @@ class ContactsRepository(private val context: Context) {
      * demandait l'email d'un contact au lieu de dire "pas d'email
      * enregistre" (voir le nouveau matcher dedie dans CommandRouter.kt).
      */
-    private fun loadEmailsById(): Map<String, String> {
+    private fun loadEmailsById(): Map<String, String> = runCatching {
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Email.CONTACT_ID,
             ContactsContract.CommonDataKinds.Email.ADDRESS,
         )
         val cursor = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Email.CONTENT_URI, projection, null, null, null,
-        ) ?: return emptyMap()
+        ) ?: return@runCatching emptyMap()
 
-        return cursor.use {
+        cursor.use {
             val result = mutableMapOf<String, String>()
             while (it.moveToNext()) {
                 val contactId = it.getString(0) ?: continue
@@ -131,5 +138,5 @@ class ContactsRepository(private val context: Context) {
             }
             result
         }
-    }
+    }.getOrDefault(emptyMap())
 }

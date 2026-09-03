@@ -111,10 +111,11 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                         val engineLabel = state.engine?.let {
                             "${it.displayName} · ${if (it.isReady) "prêt" else "indisponible"}"
                         } ?: "Initialisation…"
-                        val priorityLabel = if (state.aiPriorityMode == "local_first") {
-                            "priorité : local"
-                        } else {
-                            "priorité : Groq/Gemini cloud"
+                        val priorityLabel = when (state.aiPriorityMode) {
+                            "local_first" -> "priorité : local"
+                            // Mode isolation de test (task #329) -- voir SettingsScreen.kt "Moteur IA".
+                            "groq_only" -> "priorité : Groq uniquement (test)"
+                            else -> "priorité : Groq/Gemini cloud"
                         }
                         Text("$engineLabel · $priorityLabel", style = MaterialTheme.typography.labelSmall)
                         // Ligne 2 (seulement si au moins une reponse cloud a

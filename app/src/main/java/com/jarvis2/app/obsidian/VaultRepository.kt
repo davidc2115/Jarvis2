@@ -49,18 +49,37 @@ class VaultRepository(
     private fun relativeFolderOf(file: File): String =
         file.parentFile?.path?.removePrefix(defaultVaultDir.path)?.trim('/', '\\').orEmpty()
 
+    // Enveloppe systematiquement chaque lecture disque/SAF en runCatching --
+    // listNotes() tourne sur QUASIMENT CHAQUE message envoye au cloud (voir
+    // CommandRouter.loadMemoryNote(), relu a chaque appel de
+    // ChatViewModel.tryCloud()) : avant ce runCatching, la moindre panne
+    // (permission SAF revoquee, volume externe demonte/deconnecte, fichier
+    // .md corrompu ou verrouille, provider tiers en erreur...) levait une
+    // exception non rattrapee qui remontait jusqu'a viewModelScope.launch et
+    // faisait planter TOUTE l'application en plein "reflexion" -- exactement
+    // le signalement utilisateur "des que Jarvis reflechit, l'appli crash"
+    // (voir task #326/#328). Un fichier illisible individuel est aussi
+    // isole (runCatching par entree) pour ne pas vider tout le vault a
+    // cause d'UN SEUL fichier en erreur.
     suspend fun listNotes(): List<Note> = withContext(Dispatchers.IO) {
         val external = externalUri()
         if (external != null) {
-            storageAccess.listMarkdownFilesRecursive(external).mapNotNull { (folderPath, doc) ->
-                val name = doc.name ?: return@mapNotNull null
-                val text = context.contentResolver.openInputStream(doc.uri)?.bufferedReader()?.readText() ?: return@mapNotNull null
-                NoteParser.parse(name, text).copy(folderPath = folderPath)
-            }
+            runCatching { storageAccess.listMarkdownFilesRecursive(external) }
+                .getOrDefault(emptyList())
+                .mapNotNull { (folderPath, doc) ->
+                    runCatching {
+                        val name = doc.name ?: return@runCatching null
+                        val text = context.contentResolver.openInputStream(doc.uri)?.bufferedReader()?.readText()
+                            ?: return@runCatching null
+                        NoteParser.parse(name, text).copy(folderPath = folderPath)
+                    }.getOrNull()
+                }
         } else {
-            defaultVaultDir.walkTopDown().filter { it.isFile && it.extension == "md" }.map { f ->
-                NoteParser.parse(f.name, f.readText()).copy(folderPath = relativeFolderOf(f))
-            }.toList()
+            runCatching {
+                defaultVaultDir.walkTopDown().filter { it.isFile && it.extension == "md" }.mapNotNull { f ->
+                    runCatching { NoteParser.parse(f.name, f.readText()).copy(folderPath = relativeFolderOf(f)) }.getOrNull()
+                }.toList()
+            }.getOrDefault(emptyList())
         }
     }
 

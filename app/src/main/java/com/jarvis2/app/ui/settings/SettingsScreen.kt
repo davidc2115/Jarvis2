@@ -105,6 +105,16 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                         ),
                     )
                 }
+                // Mode isolation "Groq uniquement" (task #329, demande
+                // explicite "dans le choix des IA, met en place pour
+                // pouvoir choisir seulement Groq pour faire des tests") --
+                // distinct des options ci-dessus (celles-ci pilotent
+                // PREFERRED_ENGINE_ID/le moteur LOCAL, celle-la pilote
+                // AI_PRIORITY_MODE et court-circuite entierement le cloud
+                // Gemini + le local, voir ChatViewModel.sendMessage). Placee
+                // dans la MEME liste ("le choix des IA") pour rester
+                // decouvrable au meme endroit que les autres moteurs.
+                add(Triple("groq-only-test", "Groq uniquement (test)", state.aiPriorityMode == "groq_only"))
             }
             Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 engineOptions.forEach { (id, label, selected) ->
@@ -112,10 +122,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .selectable(selected = selected) {
-                                if (id.startsWith("selectable-gguf:")) {
-                                    viewModel.setPreferredEngine("selectable-gguf", id.removePrefix("selectable-gguf:"))
-                                } else {
-                                    viewModel.setPreferredEngine(id)
+                                when {
+                                    id == "groq-only-test" -> viewModel.setGroqOnlyTestMode(true)
+                                    id.startsWith("selectable-gguf:") ->
+                                        viewModel.setPreferredEngine("selectable-gguf", id.removePrefix("selectable-gguf:"))
+                                    else -> viewModel.setPreferredEngine(id)
                                 }
                             }
                             .padding(vertical = 6.dp),
@@ -125,6 +136,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                         Text(label, modifier = Modifier.padding(start = 8.dp))
                     }
                 }
+            }
+            if (state.aiPriorityMode == "groq_only") {
+                Text(
+                    if (state.groqApiKeys.isEmpty()) {
+                        "⚠ Aucune clé Groq configurée (voir plus bas) -- ce mode n'enverra aucune réponse tant qu'une clé n'est pas ajoutée."
+                    } else {
+                        "Mode test actif : Jarvis n'utilise QUE Groq (pas de repli Gemini, pas de repli local). Choisis un autre moteur ci-dessus pour en sortir."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.groqApiKeys.isEmpty()) MaterialTheme.colorScheme.error else JarvisCyan,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
             if (state.isDownloadingLocalModel) {
                 CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp), color = JarvisCyan, strokeWidth = 2.dp)

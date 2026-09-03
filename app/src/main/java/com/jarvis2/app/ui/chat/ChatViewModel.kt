@@ -110,73 +110,107 @@ class ChatViewModel(
         viewModelScope.launch {
             appendMessage(Turn.Role.USER, text)
             _state.value = _state.value.copy(isThinking = true)
+            // Tout le corps ci-dessous est desormais enveloppe en try/catch/
+            // finally (task #326/#328, signalement utilisateur "des que
+            // Jarvis reflechit, l'appli crash") : avant ça, la moindre
+            // exception Kotlin non prevue levee pendant cette fenetre
+            // (isThinking=true) -- lecture calendrier/contacts/vault en
+            // echec, bug dans une regex CommandRouter, etc. -- remontait
+            // jusqu'au bout de la coroutine et faisait planter TOUTE
+            // l'application (aucun CoroutineExceptionHandler n'etait
+            // installe). Ce filet affiche desormais un message d'erreur dans
+            // le chat a la place. Les causes les plus probables identifiees
+            // (lectures calendrier/contacts/vault sans runCatching) ont
+            // aussi ete corrigees a la source (voir CalendarRepository/
+            // ContactsRepository/VaultRepository) -- ce try/catch est un
+            // filet de secours final, pas le seul correctif. NE rattrape PAS
+            // un crash NATIF (SIGABRT llama.cpp/JNI, ex: format de tenseur
+            // non supporte par l'AAR chargee) : impossible a intercepter
+            // depuis Kotlin, seul un correctif cote AAR (voir task #325)
+            // peut l'empecher.
+            try {
+                // 1. Try a device-action command first (fully local, instant, deterministic).
+                when (val result = commandRouter.route(text)) {
+                    is CommandResult.Handled -> {
+                        appendMessage(Turn.Role.ASSISTANT, result.feedback)
+                        maybeSpeak(result.feedback)
+                        memoryStore.remember("$text -> ${result.feedback}", source = "command")
+                        // Certains commandes (voir CommandRouter.kt : matchers de
+                        // presentation en tete de liste) changent bulleShape/
+                        // bubbleUserColor/bubbleAssistantColor en direct depuis le
+                        // chat -- on relit systematiquement apres une commande
+                        // geree, pour que le changement s'applique tout de suite
+                        // sans devoir rouvrir l'ecran Chat.
+                        refreshPresentationPrefs()
+                        return@launch
+                    }
+                    is CommandResult.NeedsPermission -> {
+                        appendMessage(Turn.Role.ASSISTANT, result.feedback)
+                        return@launch
+                    }
+                    CommandResult.NotACommand -> Unit // fall through to the cloud, then the local LLM
+                }
 
-            // 1. Try a device-action command first (fully local, instant, deterministic).
-            when (val result = commandRouter.route(text)) {
-                is CommandResult.Handled -> {
-                    appendMessage(Turn.Role.ASSISTANT, result.feedback)
-                    maybeSpeak(result.feedback)
-                    memoryStore.remember("$text -> ${result.feedback}", source = "command")
-                    // Certains commandes (voir CommandRouter.kt : matchers de
-                    // presentation en tete de liste) changent bulleShape/
-                    // bubbleUserColor/bubbleAssistantColor en direct depuis le
-                    // chat -- on relit systematiquement apres une commande
-                    // geree, pour que le changement s'applique tout de suite
-                    // sans devoir rouvrir l'ecran Chat.
-                    refreshPresentationPrefs()
-                    _state.value = _state.value.copy(isThinking = false)
-                    return@launch
+                // 2/3. Cloud (Groq/Gemini) et modele IA local : l'ORDRE entre les
+                //    deux est piloté par AI_PRIORITY_MODE (voir CloudAiClient.kt) --
+                //    "cloud_first" par defaut (historique) ou "local_first" (reglable
+                //    depuis le chat, voir CommandRouter.kt, suite au signalement
+                //    utilisateur "Groq j'ai l'impression pas fonctionnel" : un filet
+                //    de secours immediat qui ne depend pas d'un correctif cote
+                //    CloudAiClient). Dans les deux cas, celui tente en second n'est
+                //    utilise QUE si le premier echoue (pas de cle/reseau/quota pour
+                //    le cloud, ou moteur indisponible pour le local) -- jamais les
+                //    deux a la fois.
+                val priorityMode = settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first"
+
+                if (priorityMode == "groq_only") {
+                    // Mode isolation "Groq uniquement" (task #329, demande
+                    // explicite "met en place pour pouvoir choisir seulement
+                    // Groq pour faire des tests") -- reglable dans Reglages >
+                    // Moteur IA (voir SettingsScreen.kt). AUCUN repli, ni
+                    // Gemini ni local : le but est de voir exactement ce que
+                    // Groq seul renvoie, echec inclus.
+                    if (!cloudAiClient.isGroqConfigured()) {
+                        appendMessage(
+                            Turn.Role.ASSISTANT,
+                            "Mode « Groq uniquement » actif mais aucune clé Groq n'est configurée. Ajoute-en une dans Réglages (console.groq.com, gratuit).",
+                        )
+                    } else if (!tryCloud(text, groqOnly = true)) {
+                        appendMessage(
+                            Turn.Role.ASSISTANT,
+                            "Groq n'a pas répondu (quota atteint, réseau, ou clé invalide). Mode « Groq uniquement » actif : pas de repli automatique vers Gemini ou le modèle local pour ce test.",
+                        )
+                    }
+                } else if (priorityMode == "local_first") {
+                    if (tryLocal(text, showErrorOnFailure = !cloudAiClient.isConfigured())) return@launch
+                    if (cloudAiClient.isConfigured() && tryCloud(text)) return@launch
+                    if (cloudAiClient.isConfigured()) {
+                        // Le local ET le repli cloud ont tous les deux echoue --
+                        // tryLocal() est reste silencieux (showErrorOnFailure=false
+                        // puisqu'un repli cloud etait prevu), donc un message
+                        // d'erreur final s'impose ici pour ne pas laisser
+                        // l'utilisateur sans aucune reponse.
+                        appendMessage(
+                            Turn.Role.ASSISTANT,
+                            "Moteur IA local indisponible, et le repli cloud (Groq/Gemini) a aussi échoué. Vérifie ta connexion et tes clés dans Réglages.",
+                        )
+                    }
+                } else {
+                    if (tryCloud(text)) return@launch
+                    // cloud non configuré ou en échec (pas de clé/réseau/quota) :
+                    // repli local, avec message d'erreur si lui aussi échoue.
+                    tryLocal(text, showErrorOnFailure = true)
                 }
-                is CommandResult.NeedsPermission -> {
-                    appendMessage(Turn.Role.ASSISTANT, result.feedback)
-                    _state.value = _state.value.copy(isThinking = false)
-                    return@launch
-                }
-                CommandResult.NotACommand -> Unit // fall through to the cloud, then the local LLM
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce // ne jamais avaler une annulation de coroutine (ecran ferme, etc.)
+            } catch (e: Exception) {
+                appendMessage(
+                    Turn.Role.ASSISTANT,
+                    "Oups, une erreur inattendue est survenue (${e.message ?: e::class.simpleName}). Réessaie, et si ça persiste, dis-le-moi.",
+                )
+            } finally {
+                _state.value = _state.value.copy(isThinking = false)
             }
-
-            // 2/3. Cloud (Groq/Gemini) et modele IA local : l'ORDRE entre les
-            //    deux est piloté par AI_PRIORITY_MODE (voir CloudAiClient.kt) --
-            //    "cloud_first" par defaut (historique) ou "local_first" (reglable
-            //    depuis le chat, voir CommandRouter.kt, suite au signalement
-            //    utilisateur "Groq j'ai l'impression pas fonctionnel" : un filet
-            //    de secours immediat qui ne depend pas d'un correctif cote
-            //    CloudAiClient). Dans les deux cas, celui tente en second n'est
-            //    utilise QUE si le premier echoue (pas de cle/reseau/quota pour
-            //    le cloud, ou moteur indisponible pour le local) -- jamais les
-            //    deux a la fois.
-            val localFirst = (settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first") == "local_first"
-
-            if (localFirst) {
-                if (tryLocal(text, showErrorOnFailure = !cloudAiClient.isConfigured())) {
-                    _state.value = _state.value.copy(isThinking = false)
-                    return@launch
-                }
-                if (cloudAiClient.isConfigured() && tryCloud(text)) {
-                    _state.value = _state.value.copy(isThinking = false)
-                    return@launch
-                }
-                if (cloudAiClient.isConfigured()) {
-                    // Le local ET le repli cloud ont tous les deux echoue --
-                    // tryLocal() est reste silencieux (showErrorOnFailure=false
-                    // puisqu'un repli cloud etait prevu), donc un message
-                    // d'erreur final s'impose ici pour ne pas laisser
-                    // l'utilisateur sans aucune reponse.
-                    appendMessage(
-                        Turn.Role.ASSISTANT,
-                        "Moteur IA local indisponible, et le repli cloud (Groq/Gemini) a aussi échoué. Vérifie ta connexion et tes clés dans Réglages.",
-                    )
-                }
-            } else {
-                if (tryCloud(text)) {
-                    _state.value = _state.value.copy(isThinking = false)
-                    return@launch
-                }
-                // cloud non configuré ou en échec (pas de clé/réseau/quota) :
-                // repli local, avec message d'erreur si lui aussi échoue.
-                tryLocal(text, showErrorOnFailure = true)
-            }
-            _state.value = _state.value.copy(isThinking = false)
         }
     }
 
@@ -189,13 +223,17 @@ class ChatViewModel(
      * cas d'échec (pas de clé, pas de réseau, quota dépassé, non configuré)
      * -- c'est à l'appelant de décider quoi faire ensuite (repli local).
      * Retourne true si une réponse a bien été affichée.
+     *
+     * [groqOnly] : mode isolation "Groq uniquement" (task #329) -- coupe le
+     * repli automatique vers Gemini cloud dans CloudAiClient.send(), pour
+     * que le test porte VRAIMENT que sur Groq.
      */
-    private suspend fun tryCloud(text: String): Boolean {
+    private suspend fun tryCloud(text: String, groqOnly: Boolean = false): Boolean {
         if (!cloudAiClient.isConfigured()) return false
         val cloudHistory = _state.value.messages.map { Turn(it.role, it.text) }
         val memoryNote = commandRouter.loadMemoryNote()
         val systemPrompt = buildCloudSystemPrompt(memoryNote)
-        val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text)
+        val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text, allowGeminiFallback = !groqOnly)
         var handled = false
         cloudResult.onSuccess { cloudReply ->
             val (cleanText, command) = JarvisCommandParser.parse(cloudReply.text)
@@ -309,16 +347,27 @@ class ChatViewModel(
     fun searchWeb(query: String) {
         _state.value = _state.value.copy(pendingWebSearchQuery = null, isThinking = true)
         viewModelScope.launch {
-            val result = webSearchTool.searchAndExtract(query)
-            result.onSuccess { extracts ->
-                val formatted = commandRouter.renderWebSearchResults(query, extracts)
-                appendMessage(Turn.Role.ASSISTANT, formatted)
-                maybeSpeak(formatted)
-                memoryStore.remember("$query -> $formatted", source = "web_search")
-            }.onFailure { error ->
-                appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : ${error.message}")
+            // Meme filet de securite que sendMessage() (voir sa doc, task
+            // #326/#328) : renderWebSearchResults() peut passer par le
+            // moteur IA local (renderWithLlm) et divers appels reseau/vault,
+            // donc soumis aux memes risques d'exception non prevue.
+            try {
+                val result = webSearchTool.searchAndExtract(query)
+                result.onSuccess { extracts ->
+                    val formatted = commandRouter.renderWebSearchResults(query, extracts)
+                    appendMessage(Turn.Role.ASSISTANT, formatted)
+                    maybeSpeak(formatted)
+                    memoryStore.remember("$query -> $formatted", source = "web_search")
+                }.onFailure { error ->
+                    appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : ${error.message}")
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                appendMessage(Turn.Role.ASSISTANT, "Recherche web impossible : erreur inattendue (${e.message ?: e::class.simpleName}).")
+            } finally {
+                _state.value = _state.value.copy(isThinking = false)
             }
-            _state.value = _state.value.copy(isThinking = false)
         }
     }
 

@@ -37,13 +37,23 @@ data class CalendarGroup(val displayName: String, val accountName: String, val i
 /** Reads/writes the device calendar via CalendarContract — requires READ/WRITE_CALENDAR. */
 class CalendarRepository(private val context: Context) {
 
-    private fun defaultCalendarId(): Long? {
+    // Toute methode de cette classe touchant ContentResolver.query()/insert()
+    // sur CalendarContract est enveloppee en runCatching : une permission
+    // READ_CALENDAR/WRITE_CALENDAR revoquee en cours de route (Android
+    // "auto-reset" des permissions apres inactivite) ou un provider
+    // calendrier tiers boiteux (voir task #7 -- deja un probleme connu avec
+    // certains calendriers Xiaomi) levent une SecurityException/
+    // IllegalArgumentException non rattrapee, qui faisait planter toute
+    // l'appli des qu'une commande planning/agenda etait demandee en pleine
+    // "reflexion" (voir task #326/#328). Degrade desormais proprement
+    // (liste vide / null) plutot que de crasher.
+    private fun defaultCalendarId(): Long? = runCatching {
         val projection = arrayOf(CalendarContract.Calendars._ID)
         context.contentResolver.query(CalendarContract.Calendars.CONTENT_URI, projection, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) return cursor.getLong(0)
+            if (cursor.moveToFirst()) return@runCatching cursor.getLong(0)
         }
-        return null
-    }
+        null
+    }.getOrNull()
 
     /**
      * Tous les calendriers disponibles sur le telephone (perso, pro, partages,
@@ -52,15 +62,15 @@ class CalendarRepository(private val context: Context) {
      * Sert a lister les calendriers a l'utilisateur et a resoudre un nom/
      * surnom vers un id pour le filtrage du planning.
      */
-    fun listCalendars(): List<CalendarInfo> {
+    fun listCalendars(): List<CalendarInfo> = runCatching {
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
             CalendarContract.Calendars.ACCOUNT_NAME,
         )
         val cursor = context.contentResolver.query(CalendarContract.Calendars.CONTENT_URI, projection, null, null, null)
-            ?: return emptyList()
-        return cursor.use {
+            ?: return@runCatching emptyList()
+        cursor.use {
             val result = mutableListOf<CalendarInfo>()
             while (it.moveToNext()) {
                 result.add(
@@ -73,7 +83,7 @@ class CalendarRepository(private val context: Context) {
             }
             result
         }
-    }
+    }.getOrDefault(emptyList())
 
     /**
      * Comme [listCalendars] mais regroupe les entrees identiques (meme nom
@@ -90,8 +100,8 @@ class CalendarRepository(private val context: Context) {
             .map { (key, cals) -> CalendarGroup(displayName = key.first, accountName = key.second, ids = cals.map { c -> c.id }) }
             .sortedBy { it.displayName.lowercase() }
 
-    fun createEvent(title: String, startTimeMillis: Long, durationMillis: Long = 3_600_000L, description: String = ""): Long? {
-        val calId = defaultCalendarId() ?: return null
+    fun createEvent(title: String, startTimeMillis: Long, durationMillis: Long = 3_600_000L, description: String = ""): Long? = runCatching {
+        val calId = defaultCalendarId() ?: return@runCatching null
         val values = ContentValues().apply {
             put(CalendarContract.Events.CALENDAR_ID, calId)
             put(CalendarContract.Events.TITLE, title)
@@ -100,9 +110,9 @@ class CalendarRepository(private val context: Context) {
             put(CalendarContract.Events.DTEND, startTimeMillis + durationMillis)
             put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
         }
-        val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values) ?: return null
-        return ContentUris.parseId(uri)
-    }
+        val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values) ?: return@runCatching null
+        ContentUris.parseId(uri)
+    }.getOrNull()
 
     fun upcomingEvents(fromMillis: Long = System.currentTimeMillis(), limit: Int = 20): List<CalendarEvent> =
         eventsInRange(fromMillis, Long.MAX_VALUE, limit)
@@ -134,7 +144,7 @@ class CalendarRepository(private val context: Context) {
         limit: Int = 50,
         calendarId: Long? = null,
         calendarIds: Set<Long>? = null,
-    ): List<CalendarEvent> {
+    ): List<CalendarEvent> = runCatching {
         val projection = arrayOf(
             CalendarContract.Events._ID,
             CalendarContract.Events.TITLE,
@@ -164,9 +174,9 @@ class CalendarRepository(private val context: Context) {
         val cursor = context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI, projection, selection, args,
             "${CalendarContract.Events.DTSTART} ASC",
-        ) ?: return emptyList()
+        ) ?: return@runCatching emptyList()
 
-        return cursor.use {
+        cursor.use {
             val events = mutableListOf<CalendarEvent>()
             while (it.moveToNext() && events.size < limit) {
                 events.add(
@@ -182,5 +192,5 @@ class CalendarRepository(private val context: Context) {
             }
             events
         }
-    }
+    }.getOrDefault(emptyList())
 }

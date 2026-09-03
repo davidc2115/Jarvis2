@@ -36,17 +36,21 @@ val GEMINI_CLOUD_API_KEY = stringPreferencesKey("gemini_cloud_api_key")
 /**
  * Ordre de priorite entre l'IA cloud (Groq/Gemini, voir [send]) et le
  * modele IA local (AiEngineManager) pour une conversation libre -- voir
- * ChatViewModel.sendMessage(). Deux valeurs : "cloud_first" (par defaut,
+ * ChatViewModel.sendMessage(). Trois valeurs : "cloud_first" (par defaut,
  * comportement historique -- cloud tente en premier s'il est configure,
- * repli local silencieux en cas d'echec) ou "local_first" (le modele local
- * repond en premier, le cloud n'est tente qu'en repli si le local echoue).
- * Reglable UNIQUEMENT depuis le chat (voir CommandRouter.kt, matchers
- * "priorite ia locale"/"priorite cloud"), pas via un toggle Reglages --
- * meme choix architectural que le masquage de calendrier (task #310/#311) :
- * ce genre de preference se dit a Jarvis, ca ne se coche pas dans un menu.
- * Ajoute suite au signalement utilisateur "Groq j'ai l'impression pas
- * fonctionnel" -- donne un filet de secours immediat (repasser en local
- * d'abord) sans attendre un correctif cote CloudAiClient.
+ * repli local silencieux en cas d'echec), "local_first" (le modele local
+ * repond en premier, le cloud n'est tente qu'en repli si le local echoue),
+ * ou "groq_only" (mode isolation POUR LES TESTS, task #329, demande
+ * explicite "met en place pour pouvoir choisir seulement Groq pour faire
+ * des tests") : n'essaie QUE Groq, sans repli Gemini ni repli local, pour
+ * verifier son comportement independamment du reste de la cascade.
+ * "cloud_first"/"local_first" restent reglables uniquement depuis le chat
+ * (voir CommandRouter.kt, matchers "priorite ia locale"/"priorite cloud")
+ * -- meme choix architectural que le masquage de calendrier (task
+ * #310/#311). "groq_only", lui, est expose directement dans la liste
+ * "Moteur IA" de Reglages (voir SettingsScreen.kt/SettingsViewModel.
+ * setGroqOnlyTestMode) puisque c'est un mode de test explicitement demande
+ * dans l'UI, pas une preference de conversation naturelle.
  */
 val AI_PRIORITY_MODE = stringPreferencesKey("ai_priority_mode")
 
@@ -127,6 +131,9 @@ class CloudAiClient(
     suspend fun isConfigured(): Boolean =
         loadGroqApiKeys(settings).isNotEmpty() || !settings.get(GEMINI_CLOUD_API_KEY).isNullOrBlank()
 
+    /** Comme [isConfigured] mais uniquement pour Groq -- utilise par le mode isolation "Groq uniquement" (task #329). */
+    suspend fun isGroqConfigured(): Boolean = loadGroqApiKeys(settings).isNotEmpty()
+
     /**
      * Envoie [systemPrompt] + [history] + [userText] à Groq (en tournant sur
      * toutes les clés configurées -- voir [loadGroqApiKeys] -- round-robin +
@@ -136,7 +143,15 @@ class CloudAiClient(
      * besoin d'un historique complet pour comprendre une demande d'action,
      * et ça limite la consommation de tokens côté free tier.
      */
-    suspend fun send(systemPrompt: String, history: List<Turn>, userText: String): Result<CloudReply> =
+    // [allowGeminiFallback] = false pour le mode isolation "Groq uniquement"
+    // (task #329) : le repli Gemini est alors saute, meme si une cle Gemini
+    // est configuree, pour tester Groq seul et rien d'autre.
+    suspend fun send(
+        systemPrompt: String,
+        history: List<Turn>,
+        userText: String,
+        allowGeminiFallback: Boolean = true,
+    ): Result<CloudReply> =
         withContext(Dispatchers.IO) {
             val groqKeys = loadGroqApiKeys(settings)
             var lastError: Throwable? = null
@@ -162,7 +177,7 @@ class CloudAiClient(
                 settings.set(GROQ_KEY_INDEX, (startIndex + 1) % groqKeys.size)
             }
             val geminiKey = settings.get(GEMINI_CLOUD_API_KEY)
-            if (!geminiKey.isNullOrBlank()) {
+            if (allowGeminiFallback && !geminiKey.isNullOrBlank()) {
                 val r = runCatching { sendGemini(geminiKey, systemPrompt, history, userText) }
                 if (r.isSuccess) return@withContext r.map { CloudReply(it, "Gemini cloud") }
             }

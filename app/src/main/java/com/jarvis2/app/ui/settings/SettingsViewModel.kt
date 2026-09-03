@@ -212,6 +212,15 @@ class SettingsViewModel(
      * propre modele : pas besoin d'un bouton "telecharger" separe.
      */
     fun setPreferredEngine(engineId: String, ggufModelId: String? = null) = viewModelScope.launch {
+        // Si le mode isolation "Groq uniquement" (task #329) etait actif,
+        // choisir ici un moteur LOCAL doit le desactiver -- sinon le choix
+        // serait silencieusement ignore (groq_only ne tente jamais le
+        // moteur local, voir ChatViewModel.sendMessage) et l'utilisateur ne
+        // comprendrait pas pourquoi son changement n'a aucun effet.
+        if (_state.value.aiPriorityMode == "groq_only") {
+            settings.set(com.jarvis2.app.ai.AI_PRIORITY_MODE, "cloud_first")
+            _state.value = _state.value.copy(aiPriorityMode = "cloud_first")
+        }
         settings.set(PREFERRED_ENGINE_ID, engineId)
         if (ggufModelId != null) settings.set(SELECTED_LOCAL_MODEL, ggufModelId)
         _state.value = _state.value.copy(
@@ -226,6 +235,25 @@ class SettingsViewModel(
             isDownloadingLocalModel = false,
             localModelDownloadError = if (engineId != "auto" && info.id != engineId) info.notes else null,
         )
+    }
+
+    /**
+     * Active/desactive le mode isolation "Groq uniquement" (task #329,
+     * demande explicite : "dans le choix des IA, met en place pour pouvoir
+     * choisir seulement Groq pour faire des tests") -- force
+     * ChatViewModel.sendMessage a n'essayer QUE Groq (ni repli Gemini, ni
+     * repli vers le moteur local), pour tester son comportement en
+     * isolation complete. Stocke dans AI_PRIORITY_MODE (voir
+     * ai/CloudAiClient.kt) comme "cloud_first"/"local_first" -- desactiver
+     * revient simplement a "cloud_first" (comportement par defaut).
+     * N'affecte PAS PREFERRED_ENGINE_ID : le moteur local choisi juste
+     * avant reste memorise, il est simplement ignore tant que ce mode est
+     * actif.
+     */
+    fun setGroqOnlyTestMode(enabled: Boolean) = viewModelScope.launch {
+        val mode = if (enabled) "groq_only" else "cloud_first"
+        settings.set(com.jarvis2.app.ai.AI_PRIORITY_MODE, mode)
+        _state.value = _state.value.copy(aiPriorityMode = mode)
     }
 
     fun setBubbleShape(shape: String) = viewModelScope.launch {
