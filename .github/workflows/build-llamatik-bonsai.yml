@@ -152,7 +152,7 @@ jobs:
               "qwen3tts-gen.cpp",
               "qwen3tts-spkenc.cpp",
           ]
-          insertion = "".join(f"        ${{MTMD_DIR}}/models/{m}\n" for m in new_models)
+          insertion = "".join("        " + "$" + "{MTMD_DIR}/models/" + m + "\n" for m in new_models)
           ctext = ctext.replace(anchor, anchor + insertion, 1)
           # hash_sha256_hex() (utilise par mtmd-helper.cpp, deja dans la liste) vit
           # desormais dans un vendor/hash/ tout neuf, absent de la liste Llamatik.
