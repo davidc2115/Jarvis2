@@ -1,0 +1,128 @@
+name: Build Llamatik (PrismML fork, NEON 1-bit)
+
+# Construit une AAR Android de Llamatik depuis les SOURCES, mais en pointant
+# le sous-module llama.cpp vers LE FORK de PrismML (PrismML-Eng/llama.cpp,
+# branche "prism") plutot que l'upstream officiel (ggml-org/llama.cpp).
+#
+# Pourquoi : Bonsai 27B (voir LocalModelCatalog.kt, task #318) est publie au
+# format GGUF Q1_0_g128 (1-bit natif, groupe 128) -- un type ggml PROPRE au
+# fork PrismML, absent de llama.cpp upstream. Sans ce fork, Llamatik (et
+# donc Jarvis2) ne dispose d'AUCUN noyau optimise pour ce format : au mieux
+# un chargement qui echoue proprement, au pire une deqantification generique
+# lente qui n'offre aucun des gains de vitesse annonces par PrismML.
+#
+# Verifie avant de lancer ce chantier (voir task #323/#324) : PrismML-Eng/
+# llama.cpp PR #8 ("some cpu fixes... Add NEON CPU") est MERGEE dans la
+# branche "prism" et inclut un noyau ARM NEON pour Q1_0_g128, valide par
+# divergence KL quasi nulle vs la reference F16 -- donc CPU pur (pas besoin
+# de Vulkan : PR #9, le support Vulkan/Android pour ce format, est FERMEE
+# et jamais mergee -- sans elle Vulkan retomberait de toute facon sur la
+# meme dequantification CPU generique lente).
+#
+# Contrairement a build-llamatik-vulkan.yml, PAS de plomberie Vulkan/SPIRV
+# (pas de SDK LunarG, pas de copie de headers) : build CPU standard, donc
+# nettement plus simple/rapide.
+#
+# Comme build-llamatik-vulkan.yml : ne touche RIEN au code Kotlin des
+# autres modeles (Qwen/Phi/Dolphin/Gemma4/LFM restent sur des
+# quantifications Q4_K_M standards, totalement inchangees et non affectees
+# par les ajouts bas-niveau du fork) -- seule la lib native partagee change
+# de source de compilation. Volontairement separe du CI principal (meme
+# raison que build-llamatik-vulkan.yml : compilation C++ longue).
+#
+# Resultat commite sur une branche dediee (jamais main) -- a fusionner
+# manuellement une fois l'AAR verifiee (build + assemblage app OK ; la
+# verification finale de la vitesse/correction reelle de l'inference ne
+# peut se faire que sur un vrai telephone, pas dans ce CI).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-bonsai-aar:
+    name: Build Llamatik Android AAR (PrismML fork, CPU/NEON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Jarvis2
+        uses: actions/checkout@v4
+        with:
+          path: jarvis2
+
+      - name: Checkout Llamatik (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: ferranpons/llamatik
+          ref: v1.10.1
+          submodules: recursive
+          path: llamatik-src
+
+      - name: Remplacer le sous-module llama.cpp par le fork PrismML (branche prism)
+        working-directory: llamatik-src/llama.cpp
+        run: |
+          set -e
+          echo "--- Commit llama.cpp AVANT remplacement (upstream ggml-org) ---"
+          git log -1 --oneline
+          git remote add prism https://github.com/PrismML-Eng/llama.cpp.git
+          git fetch --depth=1 prism prism
+          git checkout FETCH_HEAD
+          echo "--- Commit llama.cpp APRES remplacement (fork PrismML, branche prism) ---"
+          git log -1 --oneline
+          git submodule update --init --recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle (with dependency caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses (NDK auto-provisioning)
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Restrict native build to arm64-v8a only (faster CI build)
+        run: |
+          sed -i 's/abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")/abiFilters += setOf("arm64-v8a")/' llamatik-src/library/build.gradle.kts
+          grep -n "abiFilters" llamatik-src/library/build.gradle.kts
+
+      - name: Build Llamatik Android library AAR (CPU backend, fork PrismML)
+        working-directory: llamatik-src
+        run: ./gradlew :library:assembleRelease --stacktrace
+
+      - name: Locate the built AAR
+        id: locate
+        run: |
+          AAR_PATH=$(find llamatik-src/library/build/outputs/aar -name "*.aar" | head -n 1)
+          if [ -z "$AAR_PATH" ]; then
+            echo "::error::Aucune AAR trouvee sous llamatik-src/library/build/outputs/aar"
+            exit 1
+          fi
+          echo "aar_path=$AAR_PATH" >> "$GITHUB_OUTPUT"
+          ls -la "$AAR_PATH"
+
+      - name: Upload AAR as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llamatik-bonsai-aar
+          path: ${{ steps.locate.outputs.aar_path }}
+          retention-days: 30
+
+      - name: Commit AAR to a dedicated branch in Jarvis2
+        working-directory: jarvis2
+        run: |
+          mkdir -p app/libs
+          cp "../${{ steps.locate.outputs.aar_path }}" app/libs/llamatik-bonsai-release.aar
+          git config user.name "Jarvis Bonsai Build Bot"
+          git config user.email "jarvis-bonsai-bot@local"
+          git checkout -b ci/bonsai-aar
+          git add app/libs/llamatik-bonsai-release.aar
+          git commit -m "Llamatik AAR (Android, fork PrismML branche prism, CPU/NEON, arm64-v8a) construite depuis les sources v1.10.1"
+          git push --force origin HEAD:ci/bonsai-aar
