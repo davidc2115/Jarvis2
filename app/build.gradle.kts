@@ -129,10 +129,24 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.documentfile)
 
-    // Llamatik: AAR pre-construit (llama.cpp texte + libmtmd/CLIP vision) --
-    // voir ai/smolvlm/SmolVlmEngine.kt pour le moteur local par defaut
-    // (SmolVLM2, telecharge automatiquement, aucun compte requis).
-    implementation(libs.llamatik)
+    // Llamatik: AAR pre-construite localement (app/libs/llamatik-bonsai-release.aar)
+    // depuis les SOURCES de Llamatik v1.10.1, mais avec son sous-module
+    // llama.cpp pointant sur le fork PrismML-Eng/llama.cpp (branche "prism")
+    // au lieu de l'upstream officiel -- voir .github/workflows/build-llamatik-bonsai.yml
+    // et task #323/#324. Necessaire pour que Bonsai 27B (format GGUF
+    // Q1_0_g128, 1-bit, voir LocalModelCatalog.kt) beneficie d'un noyau
+    // CPU/NEON optimise au lieu de retomber sur une dequantification
+    // generique lente (ou d'echouer a charger) avec la version Maven
+    // upstream de Llamatik. Meme surface d'API (com.llamatik.library.platform.*,
+    // meme version source 1.10.1) donc drop-in replacement pour SmolVlmEngine.kt
+    // et SelectableLlmEngine.kt -- aucun autre moteur (Qwen/Phi/Dolphin/Gemma4/LFM)
+    // n'est affecte, ils utilisent tous la meme lib native partagee, juste
+    // recompilee contre un backend different.
+    //
+    // implementation(libs.llamatik) -- ancienne dependance Maven (upstream),
+    // desactivee pour eviter un conflit de classes com.llamatik.* en double
+    // sur le classpath (memes noms de classes que l'AAR locale ci-dessous).
+    implementation(files("libs/llamatik-bonsai-release.aar"))
 
     // Google Identity Services -- Authorization API (jeton d'acces Gmail
     // scope, voir integrations/GoogleAuthController.kt et MailReader.kt).
