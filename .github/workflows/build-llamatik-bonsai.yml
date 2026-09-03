@@ -163,8 +163,16 @@ jobs:
               "        ${LLAMA_CPP_DIR}/vendor/hash/sha256/sha256.c\n"
           )
           ctext = ctext.replace(hash_anchor, hash_insertion + hash_anchor, 1)
+          # sha256.c (vendor/hash) fait #include "rotate-bits/rotate-bits.h" en
+          # chemin relatif a vendor/hash/ lui-meme (cf. target_include_directories
+          # PRIVATE "." dans le CMakeLists.txt propre du fork). La liste de repertoires
+          # d'inclusion de Llamatik ne connait pas vendor/hash -- a ajouter.
+          incdir_anchor = "        ${LLAMA_CPP_DIR}/vendor/nlohmann\n"
+          assert ctext.count(incdir_anchor) == 1, f"CMakeLists.txt: ancre vendor/nlohmann (include dirs) trouvee {ctext.count(incdir_anchor)} fois (attendu 1)"
+          incdir_insertion = "        ${LLAMA_CPP_DIR}/vendor/hash\n"
+          ctext = ctext.replace(incdir_anchor, incdir_anchor + incdir_insertion, 1)
           cmake_path.write_text(ctext)
-          print("CMakeLists.txt patche avec succes (%d nouveaux fichiers models/*.cpp + 2 fichiers vendor/hash ajoutes)" % len(new_models))
+          print("CMakeLists.txt patche avec succes (%d nouveaux fichiers models/*.cpp + 2 fichiers vendor/hash + 1 repertoire d'inclusion vendor/hash ajoutes)" % len(new_models))
 
           PYEOF
 
