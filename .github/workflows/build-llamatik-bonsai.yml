@@ -135,6 +135,37 @@ jobs:
           assert n5 == 1, f"llama_sampler_init_penalties (multimodal_jni.cpp): attendu 1 occurrence, trouve {n5}"
           mjni_path.write_text(mtext)
           print("multimodal_jni.cpp patche avec succes (%d correctif)" % n5)
+
+          cmake_path = pathlib.Path("llamatik-src/library/src/commonMain/cpp/CMakeLists.txt")
+          ctext = cmake_path.read_text()
+          anchor = "        ${MTMD_DIR}/models/youtuvl.cpp\n"
+          assert ctext.count(anchor) == 1, f"CMakeLists.txt: ancre youtuvl.cpp trouvee {ctext.count(anchor)} fois (attendu 1)"
+          new_models = [
+              "dots3note.cpp",
+              "mimo-audio.cpp",
+              "minimax-m3.cpp",
+              "muse-glimmer.cpp",
+              "parakeet.cpp",
+              "pockettts-gen.cpp",
+              "pockettts-seanet.cpp",
+              "pockettts-spkenc.cpp",
+              "qwen3tts-gen.cpp",
+              "qwen3tts-spkenc.cpp",
+          ]
+          insertion = "".join(f"        ${{MTMD_DIR}}/models/{m}\n" for m in new_models)
+          ctext = ctext.replace(anchor, anchor + insertion, 1)
+          # hash_sha256_hex() (utilise par mtmd-helper.cpp, deja dans la liste) vit
+          # desormais dans un vendor/hash/ tout neuf, absent de la liste Llamatik.
+          hash_anchor = "        ${MTMD_DIR}/deprecation-warning.cpp\n"
+          assert ctext.count(hash_anchor) == 1, f"CMakeLists.txt: ancre deprecation-warning.cpp trouvee {ctext.count(hash_anchor)} fois (attendu 1)"
+          hash_insertion = (
+              "        ${LLAMA_CPP_DIR}/vendor/hash/hash.cpp\n"
+              "        ${LLAMA_CPP_DIR}/vendor/hash/sha256/sha256.c\n"
+          )
+          ctext = ctext.replace(hash_anchor, hash_insertion + hash_anchor, 1)
+          cmake_path.write_text(ctext)
+          print("CMakeLists.txt patche avec succes (%d nouveaux fichiers models/*.cpp + 2 fichiers vendor/hash ajoutes)" % len(new_models))
+
           PYEOF
 
 
