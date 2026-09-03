@@ -34,6 +34,23 @@ val GROQ_KEY_INDEX = intPreferencesKey("groq_key_index")
 val GEMINI_CLOUD_API_KEY = stringPreferencesKey("gemini_cloud_api_key")
 
 /**
+ * Ordre de priorite entre l'IA cloud (Groq/Gemini, voir [send]) et le
+ * modele IA local (AiEngineManager) pour une conversation libre -- voir
+ * ChatViewModel.sendMessage(). Deux valeurs : "cloud_first" (par defaut,
+ * comportement historique -- cloud tente en premier s'il est configure,
+ * repli local silencieux en cas d'echec) ou "local_first" (le modele local
+ * repond en premier, le cloud n'est tente qu'en repli si le local echoue).
+ * Reglable UNIQUEMENT depuis le chat (voir CommandRouter.kt, matchers
+ * "priorite ia locale"/"priorite cloud"), pas via un toggle Reglages --
+ * meme choix architectural que le masquage de calendrier (task #310/#311) :
+ * ce genre de preference se dit a Jarvis, ca ne se coche pas dans un menu.
+ * Ajoute suite au signalement utilisateur "Groq j'ai l'impression pas
+ * fonctionnel" -- donne un filet de secours immediat (repasser en local
+ * d'abord) sans attendre un correctif cote CloudAiClient.
+ */
+val AI_PRIORITY_MODE = stringPreferencesKey("ai_priority_mode")
+
+/**
  * Lit la liste des clés Groq configurées (voir [GROQ_API_KEYS]), avec migration
  * douce depuis l'ancien champ unique [GROQ_API_KEY] si la liste n'existe pas
  * encore (aucune perte de clé pour les utilisateurs ayant déjà configuré

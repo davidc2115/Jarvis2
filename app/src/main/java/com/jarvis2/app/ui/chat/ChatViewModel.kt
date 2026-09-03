@@ -119,66 +119,123 @@ class ChatViewModel(
                 CommandResult.NotACommand -> Unit // fall through to the cloud, then the local LLM
             }
 
-            // 2. Si une clé Groq/Gemini est configurée (voir Réglages), on tente
-            //    de faire comprendre la demande par l'IA cloud AVANT le modèle
-            //    local : c'est elle qui peut créer des fiches contact, des notes,
-            //    ou retenir des préférences de présentation à partir de langage
-            //    naturel libre, via un bloc [JARVIS_CMD:{...}] (voir
-            //    JarvisCommandParser + CommandRouter.executeAction). Best-effort :
-            //    en cas d'échec (pas de clé, pas de réseau, quota dépassé), on
-            //    retombe silencieusement sur le moteur local à l'étape 3, l'app
-            //    reste donc pleinement utilisable hors-ligne comme avant.
-            if (cloudAiClient.isConfigured()) {
-                val cloudHistory = _state.value.messages.map { Turn(it.role, it.text) }
-                val memoryNote = commandRouter.loadMemoryNote()
-                val systemPrompt = buildCloudSystemPrompt(memoryNote)
-                val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text)
-                cloudResult.onSuccess { rawReply ->
-                    val (cleanText, command) = JarvisCommandParser.parse(rawReply)
-                    val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
-                    val reply = when (actionFeedback) {
-                        is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText\n\n${actionFeedback.feedback}"
-                        is CommandResult.NeedsPermission -> actionFeedback.feedback
-                        else -> cleanText.ifBlank { "D'accord." }
-                    }
-                    appendMessage(Turn.Role.ASSISTANT, reply)
-                    maybeSpeak(reply)
-                    memoryStore.remember("$text -> $reply", source = if (command != null) "cloud_action" else "cloud_chat")
-                    refreshPresentationPrefs()
+            // 2/3. Cloud (Groq/Gemini) et modele IA local : l'ORDRE entre les
+            //    deux est piloté par AI_PRIORITY_MODE (voir CloudAiClient.kt) --
+            //    "cloud_first" par defaut (historique) ou "local_first" (reglable
+            //    depuis le chat, voir CommandRouter.kt, suite au signalement
+            //    utilisateur "Groq j'ai l'impression pas fonctionnel" : un filet
+            //    de secours immediat qui ne depend pas d'un correctif cote
+            //    CloudAiClient). Dans les deux cas, celui tente en second n'est
+            //    utilise QUE si le premier echoue (pas de cle/reseau/quota pour
+            //    le cloud, ou moteur indisponible pour le local) -- jamais les
+            //    deux a la fois.
+            val localFirst = (settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first") == "local_first"
+
+            if (localFirst) {
+                if (tryLocal(text, showErrorOnFailure = !cloudAiClient.isConfigured())) {
                     _state.value = _state.value.copy(isThinking = false)
                     return@launch
                 }
-                // cloudResult.isFailure -> pas de clé valide / réseau / quota :
-                // on continue vers l'étape 3 (modèle local) sans rien afficher.
-            }
-
-            // 3. Sinon (ou en repli si le cloud a échoué), conversation via le
-            //    LLM local, augmentée avec la mémoire pertinente (ai/MemoryStore.kt).
-            val history = _state.value.messages.map { Turn(it.role, it.text) }
-            val memories = memoryStore.relevant(text)
-            val augmentedPrompt = if (memories.isEmpty()) text else buildString {
-                appendLine("[Contexte mémorisé pertinent]")
-                memories.forEach { appendLine("- ${it.text}") }
-                appendLine()
-                append(text)
-            }
-
-            val result = engineManager.generate(augmentedPrompt, history)
-            result.onSuccess { reply ->
-                appendMessage(Turn.Role.ASSISTANT, reply)
-                maybeSpeak(reply)
-                memoryStore.remember("$text -> $reply", source = "chat")
-                if (looksUncertain(reply)) {
-                    _state.value = _state.value.copy(pendingWebSearchQuery = text)
+                if (cloudAiClient.isConfigured() && tryCloud(text)) {
+                    _state.value = _state.value.copy(isThinking = false)
+                    return@launch
                 }
-            }.onFailure { error ->
+                if (cloudAiClient.isConfigured()) {
+                    // Le local ET le repli cloud ont tous les deux echoue --
+                    // tryLocal() est reste silencieux (showErrorOnFailure=false
+                    // puisqu'un repli cloud etait prevu), donc un message
+                    // d'erreur final s'impose ici pour ne pas laisser
+                    // l'utilisateur sans aucune reponse.
+                    appendMessage(
+                        Turn.Role.ASSISTANT,
+                        "Moteur IA local indisponible, et le repli cloud (Groq/Gemini) a aussi échoué. Vérifie ta connexion et tes clés dans Réglages.",
+                    )
+                }
+            } else {
+                if (tryCloud(text)) {
+                    _state.value = _state.value.copy(isThinking = false)
+                    return@launch
+                }
+                // cloud non configuré ou en échec (pas de clé/réseau/quota) :
+                // repli local, avec message d'erreur si lui aussi échoue.
+                tryLocal(text, showErrorOnFailure = true)
+            }
+            _state.value = _state.value.copy(isThinking = false)
+        }
+    }
+
+    /**
+     * Tente l'IA cloud (Groq/Gemini, voir CloudAiClient.kt) pour [text] --
+     * c'est elle qui peut créer des fiches contact, des notes, ou retenir
+     * des préférences de présentation à partir de langage naturel libre,
+     * via un bloc [JARVIS_CMD:{...}] (voir JarvisCommandParser +
+     * CommandRouter.executeAction). Best-effort et TOUJOURS silencieux en
+     * cas d'échec (pas de clé, pas de réseau, quota dépassé, non configuré)
+     * -- c'est à l'appelant de décider quoi faire ensuite (repli local).
+     * Retourne true si une réponse a bien été affichée.
+     */
+    private suspend fun tryCloud(text: String): Boolean {
+        if (!cloudAiClient.isConfigured()) return false
+        val cloudHistory = _state.value.messages.map { Turn(it.role, it.text) }
+        val memoryNote = commandRouter.loadMemoryNote()
+        val systemPrompt = buildCloudSystemPrompt(memoryNote)
+        val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text)
+        var handled = false
+        cloudResult.onSuccess { rawReply ->
+            val (cleanText, command) = JarvisCommandParser.parse(rawReply)
+            val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
+            val reply = when (actionFeedback) {
+                is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText\n\n${actionFeedback.feedback}"
+                is CommandResult.NeedsPermission -> actionFeedback.feedback
+                else -> cleanText.ifBlank { "D'accord." }
+            }
+            appendMessage(Turn.Role.ASSISTANT, reply)
+            maybeSpeak(reply)
+            memoryStore.remember("$text -> $reply", source = if (command != null) "cloud_action" else "cloud_chat")
+            refreshPresentationPrefs()
+            handled = true
+        }
+        return handled
+    }
+
+    /**
+     * Tente le modèle IA local (AiEngineManager) pour [text], augmenté avec
+     * la mémoire pertinente (ai/MemoryStore.kt). Si [showErrorOnFailure] est
+     * faux, reste complètement silencieux en cas d'échec -- utilisé quand
+     * l'appelant prévoit un repli cloud juste après et ne veut pas afficher
+     * un message d'erreur transitoire que l'utilisateur ne verra jamais
+     * vraiment (la vraie réponse, cloud, arrive juste derrière). Retourne
+     * true si une réponse a bien été affichée.
+     */
+    private suspend fun tryLocal(text: String, showErrorOnFailure: Boolean): Boolean {
+        val history = _state.value.messages.map { Turn(it.role, it.text) }
+        val memories = memoryStore.relevant(text)
+        val augmentedPrompt = if (memories.isEmpty()) text else buildString {
+            appendLine("[Contexte mémorisé pertinent]")
+            memories.forEach { appendLine("- ${it.text}") }
+            appendLine()
+            append(text)
+        }
+
+        val result = engineManager.generate(augmentedPrompt, history)
+        var handled = false
+        result.onSuccess { reply ->
+            appendMessage(Turn.Role.ASSISTANT, reply)
+            maybeSpeak(reply)
+            memoryStore.remember("$text -> $reply", source = "chat")
+            if (looksUncertain(reply)) {
+                _state.value = _state.value.copy(pendingWebSearchQuery = text)
+            }
+            handled = true
+        }.onFailure { error ->
+            if (showErrorOnFailure) {
                 appendMessage(
                     Turn.Role.ASSISTANT,
                     "Moteur IA indisponible (${error.message}). Vérifie Réglages : soit AICore n'est pas supporté sur cet appareil, soit aucun modèle local n'est importé.",
                 )
             }
-            _state.value = _state.value.copy(isThinking = false)
         }
+        return handled
     }
 
     fun dismissWebSearchPrompt() {

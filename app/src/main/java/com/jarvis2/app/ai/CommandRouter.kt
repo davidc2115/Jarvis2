@@ -165,6 +165,37 @@ class CommandRouter(
                 settings.set(CALENDAR_GROUP_BY_DAY, "false")
                 CommandResult.Handled("Planning affiché en liste simple.")
             },
+            // --- Priorite IA cloud (Groq/Gemini) vs IA locale (voir
+            // AI_PRIORITY_MODE dans CloudAiClient.kt + ChatViewModel.
+            // sendMessage) -- reglable UNIQUEMENT depuis le chat, jamais par
+            // un toggle Reglages (meme choix que le masquage de calendrier,
+            // task #310/#311). Ajoute suite au signalement utilisateur "Groq
+            // j'ai l'impression pas fonctionnel" : un filet de secours
+            // immediat (repasser en local d'abord) qui ne depend d'aucun
+            // correctif cote CloudAiClient. En tete de liste comme les autres
+            // reglages ci-dessus, meme raison (voir commentaire plus haut).
+            Matcher(
+                Regex(
+                    """(ia\s+locale|mod[eè]le\s+local|moteur\s+local|local).*(priorit[ée]|d'abord|en premier|avant.*(le\s+)?(cloud|groq|gemini))""" +
+                        """|(priorit[ée]|d'abord|en premier).*(ia\s+locale|mod[eè]le\s+local|moteur\s+local)""",
+                ),
+            ) {
+                settings.set(AI_PRIORITY_MODE, "local_first")
+                CommandResult.Handled(
+                    "Compris : je répondrai désormais avec le modèle IA local en premier, et je ne passerai par Groq/Gemini cloud que si le local échoue. Dis « remets le cloud en priorité » pour revenir au fonctionnement par défaut.",
+                )
+            },
+            Matcher(
+                Regex(
+                    """(cloud|groq|gemini).*(priorit[ée]|d'abord|en premier)""" +
+                        """|(priorit[ée]|d'abord|en premier).*(cloud|groq|gemini)""",
+                ),
+            ) {
+                settings.set(AI_PRIORITY_MODE, "cloud_first")
+                CommandResult.Handled(
+                    "Compris : je retente Groq/Gemini cloud en premier (comportement par défaut), avec repli automatique sur le modèle IA local en cas d'échec.",
+                )
+            },
             // --- Presentation entierement libre (voir renderWithLlm plus bas) :
             // au lieu de choisir entre deux styles figes, l'utilisateur decrit
             // en detail la presentation voulue apres les deux-points, et
