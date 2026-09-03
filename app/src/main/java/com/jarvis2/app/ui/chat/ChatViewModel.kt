@@ -30,6 +30,21 @@ data class ChatUiState(
     val engine: EngineInfo? = null,
     val isThinking: Boolean = false,
     val pendingWebSearchQuery: String? = null, // set when the model admits it doesn't know
+    // Provenance de la DERNIERE reponse effectivement affichee : "Groq",
+    // "Gemini cloud", ou null si c'est le moteur IA local (voir `engine`
+    // ci-dessus, deja affiche dans le header -- voir ChatScreen.kt) qui a
+    // repondu. Ajoute suite au signalement "toujours pas de choix avec Groq
+    // en IA principal" (voir CloudAiClient.CloudReply) : avant ça, rien
+    // dans l'UI ne confirmait que Groq etait bien utilise en priorite.
+    val lastReplySource: String? = null,
+    // Ordre de priorite actuel entre cloud et local (voir AI_PRIORITY_MODE
+    // dans CloudAiClient.kt) -- charge au demarrage et rafraichi apres
+    // chaque commande geree (voir refreshPresentationPrefs), puisque
+    // l'utilisateur peut le changer en direct depuis le chat ("priorite ia
+    // locale" / "remets le cloud en priorite"). Affiche dans le header du
+    // chat pour rendre ce reglage visible (il ne l'etait auparavant nulle
+    // part dans l'UI).
+    val aiPriorityMode: String = "cloud_first",
     // Apparence des bulles (voir ui/settings/SettingsScreen.kt) -- chargee une
     // fois au demarrage, comme `engine` ci-dessus ; un changement de reglage
     // s'applique a la prochaine ouverture de l'ecran Chat.
@@ -74,6 +89,7 @@ class ChatViewModel(
                 bubbleShape = settings.get(com.jarvis2.app.ui.settings.BUBBLE_SHAPE) ?: "rounded",
                 bubbleUserColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR) ?: "gold",
                 bubbleAssistantColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR) ?: "cyan",
+                aiPriorityMode = settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first",
             )
         }
         // Meme raison que dans SettingsViewModel : observe la progression en
@@ -181,8 +197,8 @@ class ChatViewModel(
         val systemPrompt = buildCloudSystemPrompt(memoryNote)
         val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text)
         var handled = false
-        cloudResult.onSuccess { rawReply ->
-            val (cleanText, command) = JarvisCommandParser.parse(rawReply)
+        cloudResult.onSuccess { cloudReply ->
+            val (cleanText, command) = JarvisCommandParser.parse(cloudReply.text)
             val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
             val reply = when (actionFeedback) {
                 is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText\n\n${actionFeedback.feedback}"
@@ -193,6 +209,10 @@ class ChatViewModel(
             maybeSpeak(reply)
             memoryStore.remember("$text -> $reply", source = if (command != null) "cloud_action" else "cloud_chat")
             refreshPresentationPrefs()
+            // Voir doc de ChatUiState.lastReplySource : rend visible dans le
+            // header du chat que c'est bien Groq (ou Gemini en repli) qui a
+            // repondu, pas le moteur local.
+            _state.value = _state.value.copy(lastReplySource = cloudReply.provider)
             handled = true
         }
         return handled
@@ -226,6 +246,10 @@ class ChatViewModel(
             if (looksUncertain(reply)) {
                 _state.value = _state.value.copy(pendingWebSearchQuery = text)
             }
+            // Efface une eventuelle provenance cloud precedente : cette
+            // reponse-ci vient du moteur local (deja affiche via `engine`
+            // dans le header -- voir ChatUiState.lastReplySource).
+            _state.value = _state.value.copy(lastReplySource = null)
             handled = true
         }.onFailure { error ->
             if (showErrorOnFailure) {
@@ -349,6 +373,12 @@ class ChatViewModel(
             bubbleShape = settings.get(com.jarvis2.app.ui.settings.BUBBLE_SHAPE) ?: "rounded",
             bubbleUserColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_USER_COLOR) ?: "gold",
             bubbleAssistantColor = settings.get(com.jarvis2.app.ui.settings.BUBBLE_ASSISTANT_COLOR) ?: "cyan",
+            // Reflete immediatement un "priorite ia locale"/"remets le cloud
+            // en priorite" tape dans le chat (voir CommandRouter.kt) -- sans
+            // ca, l'utilisateur changeait bien le comportement reel mais le
+            // header (voir ChatScreen.kt) restait affiche sur l'ancienne
+            // valeur jusqu'au redemarrage de l'app.
+            aiPriorityMode = settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first",
         )
     }
 

@@ -101,6 +101,19 @@ suspend fun saveGroqApiKeys(settings: SettingsDataStore, keys: List<String>) {
  * retourné peut contenir un bloc [JARVIS_CMD:{...}] que l'appelant doit
  * parser et exécuter.
  */
+/**
+ * Reponse cloud avec sa provenance ([provider] : "Groq" ou "Gemini cloud") --
+ * ajoute suite au signalement utilisateur "toujours pas de choix avec Groq
+ * en IA principal" : jusqu'ici, rien dans l'UI (ni le header du chat, ni
+ * Reglages) ne confirmait QUAND Groq repondait vraiment, meme si le code
+ * l'essaie deja en premier par defaut (voir AI_PRIORITY_MODE) -- seul
+ * l'indicateur du moteur LOCAL etait visible (ChatScreen.kt), ce qui donnait
+ * l'impression que Groq n'etait jamais utilise ni "choisi". Consomme par
+ * ChatViewModel.tryCloud pour afficher explicitement la provenance de la
+ * derniere reponse (voir ChatUiState.lastReplySource).
+ */
+data class CloudReply(val text: String, val provider: String)
+
 class CloudAiClient(
     @Suppress("unused") private val context: Context,
     private val settings: SettingsDataStore,
@@ -123,7 +136,7 @@ class CloudAiClient(
      * besoin d'un historique complet pour comprendre une demande d'action,
      * et ça limite la consommation de tokens côté free tier.
      */
-    suspend fun send(systemPrompt: String, history: List<Turn>, userText: String): Result<String> =
+    suspend fun send(systemPrompt: String, history: List<Turn>, userText: String): Result<CloudReply> =
         withContext(Dispatchers.IO) {
             val groqKeys = loadGroqApiKeys(settings)
             var lastError: Throwable? = null
@@ -138,7 +151,7 @@ class CloudAiClient(
                     val r = runCatching { sendGroq(groqKeys[i], systemPrompt, history, userText) }
                     if (r.isSuccess) {
                         settings.set(GROQ_KEY_INDEX, (i + 1) % groqKeys.size)
-                        return@withContext r
+                        return@withContext r.map { CloudReply(it, "Groq") }
                     }
                     lastError = r.exceptionOrNull()
                 }
@@ -151,7 +164,7 @@ class CloudAiClient(
             val geminiKey = settings.get(GEMINI_CLOUD_API_KEY)
             if (!geminiKey.isNullOrBlank()) {
                 val r = runCatching { sendGemini(geminiKey, systemPrompt, history, userText) }
-                if (r.isSuccess) return@withContext r
+                if (r.isSuccess) return@withContext r.map { CloudReply(it, "Gemini cloud") }
             }
             Result.failure(
                 lastError?.let { IllegalStateException("Aucune IA cloud disponible -- dernière erreur Groq : ${it.message}", it) }

@@ -160,6 +160,25 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                     "Gemini cloud en repli (gratuit : aistudio.google.com).",
                 style = MaterialTheme.typography.labelSmall,
             )
+            // Statut actuel visible ici (voir aiPriorityMode dans
+            // SettingsUiState) : suite au signalement "toujours pas de choix
+            // avec Groq en IA principal" -- avant ça, rien dans Reglages ne
+            // confirmait que Groq est deja utilise en priorite des qu'une
+            // cle est configuree ci-dessous (reglable uniquement depuis le
+            // chat, voir CommandRouter.kt, pas un toggle ici).
+            Text(
+                if (state.groqApiKeys.isEmpty() && state.geminiCloudApiKey.isBlank()) {
+                    "Statut : aucune clé configurée -- Jarvis reste 100% local."
+                } else if (state.aiPriorityMode == "local_first") {
+                    "Statut : clé(s) configurée(s), mais priorité actuellement mise sur le modèle local " +
+                        "(dis « remets le cloud en priorité » dans le chat pour revenir à Groq/Gemini en premier)."
+                } else {
+                    "Statut : Groq/Gemini cloud utilisé en priorité dès l'envoi d'un message (comportement par défaut)."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = JarvisCyan,
+                modifier = Modifier.padding(top = 4.dp),
+            )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

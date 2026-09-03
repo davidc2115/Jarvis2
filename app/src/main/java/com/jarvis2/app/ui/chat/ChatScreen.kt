@@ -100,10 +100,33 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 title = {
                     Column {
                         Text("JARVIS", style = MaterialTheme.typography.headlineMedium, color = JarvisCyan)
-                        Text(
-                            state.engine?.let { "${it.displayName} · ${if (it.isReady) "prêt" else "indisponible"}" } ?: "Initialisation…",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                        // Ligne 1 : moteur local pret + priorite actuelle
+                        // (cloud/local -- voir ChatUiState.aiPriorityMode).
+                        // Ajoute suite au signalement "toujours pas de choix
+                        // avec Groq en IA principal" : avant ça, cette ligne
+                        // n'affichait QUE le moteur local, donnant
+                        // l'impression que Groq n'etait jamais "choisi" meme
+                        // s'il repond deja en priorite des qu'une cle est
+                        // configuree (voir CloudAiClient.kt).
+                        val engineLabel = state.engine?.let {
+                            "${it.displayName} · ${if (it.isReady) "prêt" else "indisponible"}"
+                        } ?: "Initialisation…"
+                        val priorityLabel = if (state.aiPriorityMode == "local_first") {
+                            "priorité : local"
+                        } else {
+                            "priorité : Groq/Gemini cloud"
+                        }
+                        Text("$engineLabel · $priorityLabel", style = MaterialTheme.typography.labelSmall)
+                        // Ligne 2 (seulement si au moins une reponse cloud a
+                        // deja ete envoyee dans cette session) : confirme
+                        // explicitement QUI a repondu en dernier.
+                        state.lastReplySource?.let { source ->
+                            Text(
+                                "Dernière réponse : $source",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = JarvisCyan,
+                            )
+                        }
                     }
                 },
             )

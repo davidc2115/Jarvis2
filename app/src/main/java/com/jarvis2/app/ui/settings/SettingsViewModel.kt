@@ -90,6 +90,13 @@ data class SettingsUiState(
     // ai/CloudAiClient.kt). Liste vide = aucune clé configurée = 100% local.
     val groqApiKeys: List<String> = emptyList(),
     val geminiCloudApiKey: String = "",
+    // Ordre de priorite cloud/local actuel (voir AI_PRIORITY_MODE dans
+    // ai/CloudAiClient.kt) -- lecture seule ici : reglable uniquement depuis
+    // le chat ("priorite ia locale" / "remets le cloud en priorite", voir
+    // CommandRouter.kt), affiche ici juste pour que ce reglage soit visible
+    // quelque part dans l'UI (suite au signalement "toujours pas de choix
+    // avec Groq en IA principal").
+    val aiPriorityMode: String = "cloud_first",
     val preferredEngineId: String = "auto",
     val selectedLocalModel: String = "none",
     val isDownloadingLocalModel: Boolean = false,
@@ -125,6 +132,7 @@ class SettingsViewModel(
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
                 groqApiKeys = loadGroqApiKeys(settings),
                 geminiCloudApiKey = settings.get(GEMINI_CLOUD_API_KEY).orEmpty(),
+                aiPriorityMode = settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first",
                 preferredEngineId = settings.get(PREFERRED_ENGINE_ID) ?: "auto",
                 selectedLocalModel = settings.get(SELECTED_LOCAL_MODEL) ?: "none",
                 bubbleShape = settings.get(BUBBLE_SHAPE) ?: "rounded",
