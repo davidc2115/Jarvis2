@@ -5,9 +5,11 @@ import com.jarvis2.app.filegen.FileGenRouter
 import com.jarvis2.app.integrations.CalendarEvent
 import com.jarvis2.app.integrations.CalendarGroup
 import com.jarvis2.app.integrations.CalendarInfo
+import com.jarvis2.app.integrations.CallLogEntry
 import com.jarvis2.app.integrations.Contact
 import com.jarvis2.app.integrations.IntegrationsRouter
 import com.jarvis2.app.integrations.MailSummary
+import com.jarvis2.app.integrations.SmsMessage
 import com.jarvis2.app.integrations.WeatherReport
 import com.jarvis2.app.obsidian.Note
 import com.jarvis2.app.obsidian.VaultRepository
@@ -153,6 +155,20 @@ class CommandRouter(
         "search_contact" -> searchContactAction(params["name"] ?: params["query"] ?: "")
         "list_contact_labels" -> listContactLabelsAction()
         "list_contacts_by_label" -> listContactsByLabelAction(params["label"] ?: "")
+        // Fusion Phase 4a ("REPREND COMPLETEMENT NEWJARVIS") -- portage Newjarvis/
+        // SmsController + PhoneController, capacite totalement absente jusqu'ici
+        // (aucun matcher local ni action cloud pour appeler/envoyer un SMS).
+        "call" -> callAction(params["target"] ?: params["name"] ?: params["number"] ?: "")
+        "end_call" -> if (integrations.phone.endCall()) CommandResult.Handled("📞 Appel terminé.") else CommandResult.Handled("Impossible de raccrocher (permission ou service indisponible).")
+        "send_sms" -> sendSmsAction(params["to"] ?: params["target"] ?: "", params["message"] ?: params["body"] ?: "")
+        "read_sms" -> CommandResult.Handled(formatSms(integrations.sms.inbox(params["count"]?.toIntOrNull() ?: 10), "💬 Boîte de réception SMS"))
+        "search_sms" -> {
+            val q = params["query"] ?: ""
+            if (q.isBlank()) CommandResult.Handled("Précise ce que tu cherches dans les SMS.")
+            else CommandResult.Handled(formatSms(integrations.sms.search(q, params["count"]?.toIntOrNull() ?: 10), "🔍 Résultats SMS pour « $q »"))
+        }
+        "read_unread_sms" -> CommandResult.Handled(formatSms(integrations.sms.unread(20), "🔴 SMS non lus"))
+        "read_call_log" -> CommandResult.Handled(formatCallLog(integrations.phone.recentCalls(params["count"]?.toIntOrNull() ?: 10)))
         "obsidian_create_note", "create_note" -> createNoteFromParams(params)
         "set_contact_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACTS, "des contacts", params["style"])
         "set_calendar_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_PLANNING, "du planning", params["style"])
@@ -522,6 +538,41 @@ class CommandRouter(
                 val label = extractAfter(t, listOf("libellé"))
                 if (label == null) CommandResult.Handled("Précise le libellé à rechercher, par exemple « contacts avec le libellé Famille ».")
                 else listContactsByLabelAction(label)
+            },
+            // --- Fusion Phase 4a ("REPREND COMPLETEMENT NEWJARVIS") -- telephonie/SMS,
+            // portage Newjarvis/PhoneController+SmsController : capacite totalement
+            // absente de Jarvis2 jusqu'ici (aucun moyen d'appeler ni d'envoyer un SMS).
+            Matcher(Regex("""raccroche|termine\s+l.appel|coupe\s+l.appel""")) {
+                if (integrations.phone.endCall()) CommandResult.Handled("📞 Appel terminé.")
+                else CommandResult.Handled("Impossible de raccrocher (permission ou service indisponible).")
+            },
+            Matcher(Regex("""(appelle|téléphone à|telephone a|passe\s+un\s+appel\s+(à|a))\s+.+""")) { t ->
+                val name = extractAfter(t, listOf("appelle", "téléphone à", "telephone a", "appel à", "appel a"))
+                if (name == null) CommandResult.Handled("Précise qui appeler, par exemple « appelle Marie ».")
+                else callAction(name)
+            },
+            Matcher(Regex("""appels?\s+manqués?|appels?\s+manques?""")) {
+                CommandResult.Handled("🔴 ${integrations.phone.missedCallCount()} appel(s) manqué(s) au total.")
+            },
+            Matcher(Regex("""(journal|historique)\s+(des\s+)?appels?|derniers?\s+appels?""")) {
+                CommandResult.Handled(formatCallLog(integrations.phone.recentCalls(10)))
+            },
+            Matcher(Regex("""(envoie|écris|ecris).*sms.*(à|a)\s+.+:.+""")) { t ->
+                val m = Regex("""(?:à|a)\s+(.+?)\s*:\s*(.+)""").find(t)
+                if (m == null) {
+                    CommandResult.Handled("Précise, par exemple : « envoie un sms à Marie : je serai en retard ».")
+                } else {
+                    sendSmsAction(m.groupValues[1].trim(), m.groupValues[2].trim())
+                }
+            },
+            Matcher(Regex("""sms\s+non\s+lus?""")) { CommandResult.Handled(formatSms(integrations.sms.unread(20), "🔴 SMS non lus")) },
+            Matcher(Regex("""cherche.*sms.*""")) { t ->
+                val query = extractAfter(t, listOf("sms"))
+                if (query == null) CommandResult.Handled("Précise ce que tu cherches dans les SMS.")
+                else CommandResult.Handled(formatSms(integrations.sms.search(query, 10), "🔍 Résultats SMS pour « $query »"))
+            },
+            Matcher(Regex("""(lis|montre|affiche).*sms""")) {
+                CommandResult.Handled(formatSms(integrations.sms.inbox(10), "💬 Boîte de réception SMS"))
             },
             // --- Fiche d'un contact precis (numero/email/coordonnees) : voir
             // integrations/ContactsRepository.kt pour phone/email reels.
@@ -1207,6 +1258,83 @@ class CommandRouter(
             }
         }.trim()
         return CommandResult.Handled(text)
+    }
+
+    // ============================================================
+    // Telephonie / SMS (fusion Phase 4a, portage Newjarvis/PhoneController
+    // + SmsController -- "REPREND COMPLETEMENT NEWJARVIS"). Reutilise le
+    // meme carnet natif que les contacts (integrations.contacts) pour
+    // resoudre un nom en numero, exactement comme le fait Newjarvis via
+    // ContactsController.findPhoneNumber.
+    // ============================================================
+
+    /** Numero brut si [nameOrNumber] en est deja un, sinon resolution via le carnet natif (premier contact dont le nom correspond). */
+    private fun resolvePhoneNumber(nameOrNumber: String): String? {
+        val cleaned = nameOrNumber.replace(" ", "").replace("-", "")
+        if (cleaned.isNotEmpty() && cleaned.all { it.isDigit() || it == '+' }) return cleaned
+        return integrations.contacts.listContacts(limit = 200)
+            .firstOrNull { it.name.contains(nameOrNumber, ignoreCase = true) }
+            ?.phone
+    }
+
+    private fun callAction(target: String): CommandResult {
+        if (target.isBlank()) return CommandResult.Handled("Précise qui appeler, par exemple « appelle Marie ».")
+        val number = resolvePhoneNumber(target)
+            ?: return CommandResult.Handled("Numéro introuvable pour « $target » (ou permission Contacts non accordée).")
+        return if (integrations.phone.call(number)) {
+            CommandResult.Handled("📞 Appel en cours vers $target ($number)...")
+        } else {
+            CommandResult.Handled("Échec du lancement de l'appel (vérifie la permission Téléphone dans les réglages).")
+        }
+    }
+
+    private fun sendSmsAction(to: String, message: String): CommandResult {
+        if (to.isBlank() || message.isBlank()) {
+            return CommandResult.Handled("Précise le destinataire et le message du SMS, par exemple « envoie un sms à Marie : je serai en retard ».")
+        }
+        val number = resolvePhoneNumber(to)
+            ?: return CommandResult.Handled("Numéro introuvable pour « $to » (ou permission Contacts non accordée).")
+        return if (integrations.sms.sendSms(number, message)) {
+            CommandResult.Handled("💬 SMS envoyé à $to ($number).")
+        } else {
+            CommandResult.Handled("Échec de l'envoi du SMS (vérifie la permission SMS dans les réglages).")
+        }
+    }
+
+    private fun formatSms(messages: List<SmsMessage>, title: String): String {
+        if (messages.isEmpty()) return "$title : aucun SMS trouvé."
+        val zone = java.time.ZoneId.systemDefault()
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("dd/MM HH'h'mm")
+        return buildString {
+            appendLine("$title (${messages.size}) :")
+            messages.forEach { m ->
+                val dt = java.time.Instant.ofEpochMilli(m.dateMillis).atZone(zone).format(fmt)
+                val unreadTag = if (!m.isRead) " 🔴" else ""
+                appendLine("• ${m.address}$unreadTag — $dt")
+                appendLine("  « ${m.body} »")
+            }
+        }.trim()
+    }
+
+    private fun formatCallLog(calls: List<CallLogEntry>): String {
+        if (calls.isEmpty()) return "📞 Aucun appel récent trouvé."
+        val zone = java.time.ZoneId.systemDefault()
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("dd/MM HH'h'mm")
+        return buildString {
+            appendLine("📞 Journal des ${calls.size} derniers appels :")
+            calls.forEach { c ->
+                val typeStr = when (c.type) {
+                    android.provider.CallLog.Calls.INCOMING_TYPE -> "📥 Entrant"
+                    android.provider.CallLog.Calls.OUTGOING_TYPE -> "📤 Sortant"
+                    android.provider.CallLog.Calls.MISSED_TYPE -> "🔴 Manqué"
+                    else -> "📞 Autre"
+                }
+                val displayName = c.name?.takeIf { it.isNotBlank() }?.let { "$it (${c.number})" } ?: c.number
+                val dt = java.time.Instant.ofEpochMilli(c.dateMillis).atZone(zone).format(fmt)
+                val durationStr = if (c.durationSeconds > 0) " | ${c.durationSeconds}s" else ""
+                appendLine("• $displayName — $typeStr ($dt$durationStr)")
+            }
+        }.trim()
     }
 
     /** Cree une note structuree (title/content/folder deja extraits par l'IA cloud, pas de regex a matcher). */

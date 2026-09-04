@@ -435,6 +435,20 @@ class ChatViewModel(
                 "natif. Aucun param. list_contacts_by_label : lister les contacts natifs portant un libellé précis. Params : label.",
         )
         appendLine("- obsidian_create_note : créer une note dans le vault Obsidian. Params : title, content, folder (optionnel).")
+        // Fusion Phase 4a ("REPREND COMPLETEMENT NEWJARVIS") -- telephonie/SMS,
+        // portage Newjarvis/PhoneController+SmsController, capacite totalement
+        // absente jusqu'ici cote IA cloud (aucune action call/sms n'existait).
+        appendLine(
+            "- call : passer un appel téléphonique. Params : target (nom d'un contact ou numéro direct). " +
+                "end_call : raccrocher l'appel en cours. Aucun param.",
+        )
+        appendLine(
+            "- send_sms : envoyer un SMS. Params : to (nom d'un contact ou numéro), message. " +
+                "read_sms : lire les derniers SMS reçus. Params : count (optionnel, défaut 10). " +
+                "search_sms : chercher un SMS par mot-clé (contenu ou expéditeur). Params : query, count (optionnel). " +
+                "read_unread_sms : lire les SMS non lus. Aucun param. " +
+                "read_call_log : voir le journal des derniers appels. Params : count (optionnel, défaut 10).",
+        )
         // Fusion task #5 REDO ("COMME SUR NEWJARVIS") -- avant, seule delete_event
         // (par titre) etait documentee ici : l'IA cloud ne pouvait ni creer, ni
         // chercher, ni modifier, ni lister l'agenda des que la phrase de

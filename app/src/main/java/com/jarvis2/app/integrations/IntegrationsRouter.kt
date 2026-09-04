@@ -13,4 +13,8 @@ class IntegrationsRouter(
     val alarm: AlarmController,
     val mailReader: MailReader,
     val weather: WeatherController,
+    // Fusion Phase 4a ("REPREND COMPLETEMENT NEWJARVIS") -- portage Newjarvis/
+    // SmsController + PhoneController, capacite totalement absente jusqu'ici.
+    val sms: SmsRepository,
+    val phone: PhoneRepository,
 )

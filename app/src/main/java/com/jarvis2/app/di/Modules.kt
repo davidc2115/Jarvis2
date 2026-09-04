@@ -25,6 +25,8 @@ import com.jarvis2.app.integrations.LocationProvider
 import com.jarvis2.app.integrations.WeatherController
 import com.jarvis2.app.integrations.MailComposer
 import com.jarvis2.app.integrations.MailReader
+import com.jarvis2.app.integrations.PhoneRepository
+import com.jarvis2.app.integrations.SmsRepository
 import com.jarvis2.app.integrations.StorageAccess
 import com.jarvis2.app.integrations.WifiController
 import com.jarvis2.app.obsidian.VaultRepository
@@ -71,7 +73,9 @@ val integrationsModule = module {
     single { AlarmController(androidContext()) }
     single { GoogleAuthController(androidContext()) }
     single { MailReader(get()) }
-    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { SmsRepository(androidContext()) }
+    single { PhoneRepository(androidContext()) }
+    single { IntegrationsRouter(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 
     single { PdfGenerator(androidContext()) }
     single { ZipGenerator(androidContext()) }

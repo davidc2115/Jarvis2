@@ -61,6 +61,14 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
 
+    <!-- Telephonie / SMS (fusion Phase 4a, portage Newjarvis/SmsController+PhoneController) -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
     <!-- Comptes Google deja synchronises sur le telephone (lecture Gmail sans ecran de connexion separe, voir integrations/GoogleAuthController.kt) -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
@@ -96,6 +104,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Recepteur SMS (validation des permissions SMS sur Android 10+, voir SmsReceiver.kt) -->
+        <receiver
+            android:name=".integrations.SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
 
         <!-- FileProvider so generated PDFs/ZIPs/KML/DOCX/XLSX can be shared to mail apps etc. -->
         <provider
