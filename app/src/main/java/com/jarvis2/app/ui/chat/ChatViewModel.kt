@@ -241,16 +241,32 @@ class ChatViewModel(
         val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text, allowGeminiFallback = !groqOnly)
         var handled = false
         cloudResult.onSuccess { cloudReply ->
-            val (cleanText, command) = JarvisCommandParser.parse(cloudReply.text)
-            val actionFeedback = command?.let { commandRouter.executeAction(it.action, it.params) }
-            val reply = when (actionFeedback) {
-                is CommandResult.Handled -> if (cleanText.isBlank()) actionFeedback.feedback else "$cleanText\n\n${actionFeedback.feedback}"
-                is CommandResult.NeedsPermission -> actionFeedback.feedback
-                else -> cleanText.ifBlank { "D'accord." }
+            // Portage Newjarvis (task #2/#3, fusion) : parse() renvoie
+            // desormais TOUTES les commandes [JARVIS_CMD:...] presentes
+            // dans la reponse (pas seulement la premiere), avec un parsing
+            // robuste aux tableaux/objets JSON imbriques dans le payload --
+            // voir la doc de classe de JarvisCommandParser pour le bug reel
+            // que ça corrige (troncature silencieuse au premier "]").
+            val (cleanText, commands) = JarvisCommandParser.parse(cloudReply.text)
+            val actionFeedback = commands
+                .map { commandRouter.executeAction(it.action, it.params) }
+                .joinToString("\n\n") { feedback ->
+                    when (feedback) {
+                        is CommandResult.Handled -> feedback.feedback
+                        is CommandResult.NeedsPermission -> feedback.feedback
+                        else -> ""
+                    }
+                }
+                .trim()
+            val reply = when {
+                cleanText.isBlank() && actionFeedback.isBlank() -> "D'accord."
+                cleanText.isBlank() -> actionFeedback
+                actionFeedback.isBlank() -> cleanText
+                else -> "$cleanText\n\n$actionFeedback"
             }
             appendMessage(Turn.Role.ASSISTANT, reply)
             maybeSpeak(reply)
-            memoryStore.remember("$text -> $reply", source = if (command != null) "cloud_action" else "cloud_chat")
+            memoryStore.remember("$text -> $reply", source = if (commands.isNotEmpty()) "cloud_action" else "cloud_chat")
             refreshPresentationPrefs()
             // Voir doc de ChatUiState.lastReplySource : rend visible dans le
             // header du chat que c'est bien Groq (ou Gemini en repli) qui a
