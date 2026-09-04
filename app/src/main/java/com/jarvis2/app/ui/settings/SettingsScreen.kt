@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.jarvis2.app.ai.CloudProvider
 import com.jarvis2.app.ai.gguf.LocalGgufModel
 import com.jarvis2.app.ui.theme.BubbleStyle
 import com.jarvis2.app.ui.theme.JarvisCyan
@@ -56,6 +58,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
         mutableStateListOf(*state.groqApiKeys.ifEmpty { listOf("") }.toTypedArray())
     }
     var geminiCloudKeyField by remember(state.geminiCloudApiKey) { mutableStateOf(state.geminiCloudApiKey) }
+    // Fournisseurs cloud additionnels (task #4, portage Newjarvis) -- un champ
+    // texte par fournisseur, resynchronise depuis le ViewModel comme les
+    // champs Groq/Gemini ci-dessus.
+    val extraProviderFields = remember(state.extraProviderKeys) {
+        mutableStateMapOf(*state.extraProviderKeys.toList().toTypedArray())
+    }
 
     // Lance l'ecran de consentement Google quand GoogleAuthController signale qu'il en
     // faut un (voir SettingsViewModel.connectGmail/pendingGmailAuthIntent) ; le resultat
@@ -189,14 +197,20 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
             // confirmait que Groq est deja utilise en priorite des qu'une
             // cle est configuree ci-dessous (reglable uniquement depuis le
             // chat, voir CommandRouter.kt, pas un toggle ici).
+            // Prend en compte les fournisseurs additionnels (task #4) en plus
+            // de Groq/Gemini -- sinon un utilisateur n'ayant configure QUE
+            // OpenAI/Claude/etc. voyait a tort "aucune clé configurée".
+            val anyCloudKeyConfigured = state.groqApiKeys.isNotEmpty() ||
+                state.geminiCloudApiKey.isNotBlank() ||
+                state.extraProviderKeys.values.any { it.isNotBlank() }
             Text(
-                if (state.groqApiKeys.isEmpty() && state.geminiCloudApiKey.isBlank()) {
-                    "Statut : aucune clé configurée -- Jarvis reste 100% local."
+                if (!anyCloudKeyConfigured) {
+                    "Statut : aucune clé configurée -- Jarvis reste 100% local (Pollinations, gratuit et sans clé, sert de dernier filet si besoin)."
                 } else if (state.aiPriorityMode == "local_first") {
                     "Statut : clé(s) configurée(s), mais priorité actuellement mise sur le modèle local " +
-                        "(dis « remets le cloud en priorité » dans le chat pour revenir à Groq/Gemini en premier)."
+                        "(dis « remets le cloud en priorité » dans le chat pour revenir au cloud en premier)."
                 } else {
-                    "Statut : Groq/Gemini cloud utilisé en priorité dès l'envoi d'un message (comportement par défaut)."
+                    "Statut : IA cloud utilisée en priorité dès l'envoi d'un message (Groq, puis le reste de la cascade configurée -- comportement par défaut)."
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = JarvisCyan,
@@ -259,6 +273,33 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             Button(onClick = { viewModel.setGeminiCloudApiKey(geminiCloudKeyField) }, modifier = Modifier.padding(top = 8.dp)) { Text("Enregistrer") }
+
+            // Fournisseurs additionnels (task #4, portage Newjarvis) : tous
+            // optionnels -- Groq/Gemini restent les fournisseurs principaux,
+            // ceux-ci n'entrent en jeu que si les deux precedents echouent.
+            Text(
+                "Fournisseurs additionnels (optionnel)",
+                style = MaterialTheme.typography.titleMedium,
+                color = JarvisGold,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Text(
+                "Essayes dans l'ordre si Groq et Gemini echouent tous les deux -- en dernier " +
+                    "recours, Pollinations (gratuit, sans clé) prend le relais automatiquement.",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            SettingsViewModel.EXTRA_PROVIDERS.forEach { provider ->
+                OutlinedTextField(
+                    value = extraProviderFields[provider.name].orEmpty(),
+                    onValueChange = { extraProviderFields[provider.name] = it },
+                    label = { Text("Clé API ${provider.displayName}") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                Button(
+                    onClick = { viewModel.setExtraProviderKey(provider, extraProviderFields[provider.name].orEmpty()) },
+                    modifier = Modifier.padding(top = 4.dp),
+                ) { Text("Enregistrer") }
+            }
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

@@ -229,16 +229,17 @@ class ChatViewModel(
      * -- c'est à l'appelant de décider quoi faire ensuite (repli local).
      * Retourne true si une réponse a bien été affichée.
      *
-     * [groqOnly] : mode isolation "Groq uniquement" (task #329) -- coupe le
-     * repli automatique vers Gemini cloud dans CloudAiClient.send(), pour
-     * que le test porte VRAIMENT que sur Groq.
+     * [groqOnly] : mode isolation "Groq uniquement" (task #329) -- coupe tout
+     * le reste de la cascade (Gemini, Claude, OpenAI, Mistral, DeepSeek,
+     * Perplexity, Together, OpenRouter, Pollinations -- voir CloudProvider)
+     * dans CloudAiClient.send(), pour que le test porte VRAIMENT que sur Groq.
      */
     private suspend fun tryCloud(text: String, groqOnly: Boolean = false): Boolean {
         if (!cloudAiClient.isConfigured()) return false
         val cloudHistory = _state.value.messages.map { Turn(it.role, it.text) }
         val memoryNote = commandRouter.loadMemoryNote()
         val systemPrompt = buildCloudSystemPrompt(memoryNote)
-        val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text, allowGeminiFallback = !groqOnly)
+        val cloudResult = cloudAiClient.send(systemPrompt, cloudHistory, text, allowFallbackChain = !groqOnly)
         var handled = false
         cloudResult.onSuccess { cloudReply ->
             // Portage Newjarvis (task #2/#3, fusion) : parse() renvoie

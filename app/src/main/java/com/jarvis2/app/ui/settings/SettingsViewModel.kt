@@ -7,7 +7,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis2.app.ai.AiEngineManager
 import com.jarvis2.app.ai.EngineInfo
+import com.jarvis2.app.ai.CloudProvider
 import com.jarvis2.app.ai.GEMINI_CLOUD_API_KEY
+import com.jarvis2.app.ai.loadCloudApiKey
+import com.jarvis2.app.ai.saveCloudApiKey
 import com.jarvis2.app.ai.loadGroqApiKeys
 import com.jarvis2.app.ai.saveGroqApiKeys
 import com.jarvis2.app.data.SettingsDataStore
@@ -90,6 +93,13 @@ data class SettingsUiState(
     // ai/CloudAiClient.kt). Liste vide = aucune clé configurée = 100% local.
     val groqApiKeys: List<String> = emptyList(),
     val geminiCloudApiKey: String = "",
+    // Fournisseurs cloud additionnels (task #4, portage Newjarvis -- voir
+    // CloudProvider dans ai/CloudAiClient.kt) : cle unique (pas de rotation
+    // multi-cles, contrairement a Groq) par fournisseur, cle du map = nom de
+    // l'enum CloudProvider (ex "OPENAI", "CLAUDE"...). Optionnel comme
+    // Groq/Gemini -- aucun n'est requis, la cascade retombe sur Pollinations
+    // (gratuit, sans cle) si rien d'autre n'est configure/ne fonctionne.
+    val extraProviderKeys: Map<String, String> = emptyMap(),
     // Ordre de priorite cloud/local actuel (voir AI_PRIORITY_MODE dans
     // ai/CloudAiClient.kt) -- lecture seule ici : reglable uniquement depuis
     // le chat ("priorite ia locale" / "remets le cloud en priorite", voir
@@ -132,6 +142,7 @@ class SettingsViewModel(
                 webSearchApiKey = settings.get(WEB_SEARCH_API_KEY).orEmpty(),
                 groqApiKeys = loadGroqApiKeys(settings),
                 geminiCloudApiKey = settings.get(GEMINI_CLOUD_API_KEY).orEmpty(),
+                extraProviderKeys = EXTRA_PROVIDERS.associate { it.name to loadCloudApiKey(settings, it) },
                 aiPriorityMode = settings.get(com.jarvis2.app.ai.AI_PRIORITY_MODE) ?: "cloud_first",
                 preferredEngineId = settings.get(PREFERRED_ENGINE_ID) ?: "auto",
                 selectedLocalModel = settings.get(SELECTED_LOCAL_MODEL) ?: "none",
@@ -199,6 +210,25 @@ class SettingsViewModel(
     fun setGeminiCloudApiKey(key: String) = viewModelScope.launch {
         settings.set(GEMINI_CLOUD_API_KEY, key)
         _state.value = _state.value.copy(geminiCloudApiKey = key)
+    }
+
+    /**
+     * Cle d'un fournisseur cloud additionnel (task #4, portage Newjarvis --
+     * OpenAI/Claude/Mistral/DeepSeek/Perplexity/Together/OpenRouter). Un
+     * seul champ par fournisseur (pas de "+"/rotation comme Groq) : ce sont
+     * des repli optionnels au-dela de Groq/Gemini, pas le fournisseur
+     * principal attendu.
+     */
+    fun setExtraProviderKey(provider: CloudProvider, key: String) = viewModelScope.launch {
+        saveCloudApiKey(settings, provider, key)
+        _state.value = _state.value.copy(
+            extraProviderKeys = _state.value.extraProviderKeys + (provider.name to key.trim()),
+        )
+    }
+
+    companion object {
+        /** Fournisseurs additionnels affiches dans Reglages -- Groq (multi-cles) et Gemini (deja son propre champ) exclus, Pollinations n'a pas de cle. */
+        val EXTRA_PROVIDERS = CloudProvider.FALLBACK_ORDER.filter { it != CloudProvider.GEMINI && it != CloudProvider.POLLINATIONS }
     }
 
     /**
