@@ -121,6 +121,7 @@ class CommandRouter(
      * comme un vrai assistant".
      */
     suspend fun executeAction(action: String, params: Map<String, String>): CommandResult = when (action) {
+        "delete_event" -> deleteEventByTitle(params["title"] ?: params["query"] ?: params["event"] ?: "")
         "save_contact_profile" -> saveContactProfileFromParams(params)
         "obsidian_create_note", "create_note" -> createNoteFromParams(params)
         "set_contact_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACTS, "des contacts", params["style"])
@@ -289,6 +290,18 @@ class CommandRouter(
                 val title = extractAfter(t, listOf("rendez-vous", "événement", "evenement", "rappel", "réunion")) ?: "Nouvel événement Jarvis"
                 val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
                 CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
+            },
+            // Fusion task #5 (portage Newjarvis/CalendarController.deleteEvent) --
+            // capacite qui n'existait PAS DU TOUT dans Jarvis2 jusqu'ici (seules la
+            // creation et la LECTURE du planning etaient possibles, jamais la
+            // suppression). Recherche par TITRE plutot que par id opaque (jamais
+            // expose a l'utilisateur ni a l'IA cloud, voir deleteEventByTitle) --
+            // reutilisee identiquement par executeAction("delete_event", ...) pour
+            // que l'IA cloud puisse declencher la meme suppression depuis une
+            // demande en langage libre.
+            Matcher(Regex("""(supprime|annule|efface|retire).*(rendez-vous|événement|evenement|réunion|reunion)""")) { t ->
+                val title = extractAfter(t, listOf("rendez-vous", "événement", "evenement", "réunion", "reunion"))
+                deleteEventByTitle(title.orEmpty())
             },
             // Le 3e groupe ("j'ai quoi"/"je fais quoi"/...) couvre les phrases qui
             // demandent le planning SANS jamais dire le mot "planning"/"agenda" --
@@ -1152,6 +1165,53 @@ class CommandRouter(
             "- ${dt.toLocalDate()} ${dt.toLocalTime()} : ${e.title} [calendrier: ${e.calendarName}]"
         }
         return renderWithLlm("$label (${events.size} événement(s)) :\n$raw", instruction) { formatEvents(events, groupByDay = true, label = label) }
+    }
+
+    /**
+     * Cherche un evenement A VENIR dont le titre contient [title] (insensible
+     * a la casse) dans les 90 prochains jours, et le supprime s'il y a
+     * exactement une correspondance -- fusion task #5 (portage Newjarvis/
+     * CalendarController.deleteEvent). Recherche par TITRE plutot que par id
+     * opaque : ni l'utilisateur ni l'IA cloud ne voient jamais d'id
+     * d'evenement (voir renderEvents/formatEvents), donc un id ne serait de
+     * toute facon jamais fourni par l'appelant -- cette fonction est le seul
+     * point d'entree, reutilisee par le matcher local ET par
+     * executeAction("delete_event", ...).
+     */
+    private suspend fun deleteEventByTitle(title: String): CommandResult {
+        if (title.isBlank()) {
+            return CommandResult.Handled("Précise le titre du rendez-vous à supprimer (ex : « supprime le rendez-vous dentiste »).")
+        }
+        val now = System.currentTimeMillis()
+        val matches = integrations.calendar.eventsInRange(now - 86_400_000L, now + 90L * 86_400_000L, 200)
+            .filter { it.title.contains(title, ignoreCase = true) }
+        return when {
+            matches.isEmpty() -> CommandResult.Handled("Aucun rendez-vous trouvé contenant « $title » dans les 90 prochains jours.")
+            matches.size > 1 -> {
+                val zone = java.time.ZoneId.systemDefault()
+                val list = matches.joinToString(", ") { e ->
+                    val dt = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone)
+                    "\"${e.title}\" (${dt.toLocalDate()} ${dt.toLocalTime()})"
+                }
+                CommandResult.Handled("Plusieurs rendez-vous correspondent à « $title » : $list. Précise lequel (date/heure) pour éviter toute ambiguïté.")
+            }
+            else -> {
+                val event = matches.first()
+                if (integrations.calendar.deleteEvent(event.id)) {
+                    CommandResult.Handled("Rendez-vous « ${event.title} » supprimé.")
+                } else {
+                    // Meme famille de probleme que task #7 historique (calendriers
+                    // Xiaomi) : certains OEM (MIUI notamment) bloquent silencieusement
+                    // l'ecriture agenda par une appli tierce malgre WRITE_CALENDAR
+                    // deja accordee.
+                    CommandResult.Handled(
+                        "Échec de la suppression de « ${event.title} ». Si tu es sur un téléphone Xiaomi/MIUI : " +
+                            "Paramètres > Applications > Jarvis2 > Autorisations supplémentaires > active « Modifier l'agenda »/« Démarrage automatique », " +
+                            "en plus de la permission agenda déjà accordée.",
+                    )
+                }
+            }
+        }
     }
 
     /**

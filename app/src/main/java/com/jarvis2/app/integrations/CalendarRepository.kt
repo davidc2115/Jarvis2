@@ -193,4 +193,50 @@ class CalendarRepository(private val context: Context) {
             events
         }
     }.getOrDefault(emptyList())
+
+    /**
+     * Supprime un evenement par id (portage Newjarvis/CalendarController.
+     * deleteEvent, fusion task #5) -- capacite qui n'existait PAS du tout
+     * dans Jarvis2 jusqu'ici (seules la creation et la lecture du planning
+     * etaient possibles). Retourne false (jamais d'exception) si la
+     * suppression echoue -- y compris le cas connu MIUI/Xiaomi ou
+     * l'ecriture agenda par une appli tierce est bloquee malgre la
+     * permission WRITE_CALENDAR accordee (voir task #7 historique de ce
+     * depot -- meme famille de probleme).
+     */
+    fun deleteEvent(eventId: Long): Boolean = runCatching {
+        context.contentResolver.delete(
+            CalendarContract.Events.CONTENT_URI,
+            "${CalendarContract.Events._ID} = ?",
+            arrayOf(eventId.toString()),
+        ) > 0
+    }.getOrDefault(false)
+
+    /**
+     * Modifie un evenement existant (portage Newjarvis/CalendarController.
+     * updateEvent, fusion task #5) -- seuls les champs non-null sont
+     * modifies, les autres restent inchanges. Retourne false (jamais
+     * d'exception) en cas d'echec.
+     */
+    fun updateEvent(
+        eventId: Long,
+        newTitle: String? = null,
+        newStartMillis: Long? = null,
+        newEndMillis: Long? = null,
+        newDescription: String? = null,
+    ): Boolean = runCatching {
+        val values = ContentValues().apply {
+            newTitle?.let { put(CalendarContract.Events.TITLE, it) }
+            newStartMillis?.let { put(CalendarContract.Events.DTSTART, it) }
+            newEndMillis?.let { put(CalendarContract.Events.DTEND, it) }
+            newDescription?.let { put(CalendarContract.Events.DESCRIPTION, it) }
+        }
+        if (values.size() == 0) return@runCatching false
+        context.contentResolver.update(
+            CalendarContract.Events.CONTENT_URI,
+            values,
+            "${CalendarContract.Events._ID} = ?",
+            arrayOf(eventId.toString()),
+        ) > 0
+    }.getOrDefault(false)
 }

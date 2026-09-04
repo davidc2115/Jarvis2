@@ -420,6 +420,9 @@ class ChatViewModel(
         appendLine("- save_contact_profile : créer/mettre à jour une fiche contact. Params : name (obligatoire), " +
             "category, nickname, phone, phonePro, email, address, addressPro, birthday, company, position, notes.")
         appendLine("- obsidian_create_note : créer une note dans le vault Obsidian. Params : title, content, folder (optionnel).")
+        appendLine("- delete_event : supprimer un rendez-vous/événement de l'agenda du téléphone (fusion task #5). Params : title " +
+            "(le titre du rendez-vous tel qu'il apparaît dans le planning -- jamais d'id, aucun id n'est jamais communiqué). " +
+            "Cherche parmi les 90 prochains jours ; si plusieurs événements correspondent, précise-le à l'utilisateur au lieu de choisir au hasard.")
         appendLine("- remember_fact : mémoriser durablement un fait sur l'utilisateur ou ses préférences. Params : fact.")
         appendLine("- forget_fact : oublier un fait mémorisé précédemment. Params : query (mots-clés du fait à oublier).")
         appendLine("- set_contact_presentation_style : mémoriser comment présenter la liste des contacts. Params : style.")
