@@ -211,7 +211,13 @@ class CloudAiClient(
             put("model", "openai/gpt-oss-120b")
             put("messages", messages)
             put("temperature", 0.4)
-            put("max_tokens", 1024)
+            // 1024 -> 2048 (demande explicite "que Groq reponde parfaitement") :
+            // une reponse detaillee (fiche contact complete, note longue,
+            // explication en plusieurs paragraphes) pouvait etre coupee net
+            // en plein milieu avec l'ancienne limite, ce qui ressemble a une
+            // reponse "imparfaite"/tronquee cote utilisateur alors que Groq
+            // avait simplement atteint sa limite de tokens de sortie.
+            put("max_tokens", 2048)
         }
         val request = Request.Builder()
             .url("https://api.groq.com/openai/v1/chat/completions")

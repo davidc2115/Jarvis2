@@ -108,8 +108,11 @@ class ChatViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
-            appendMessage(Turn.Role.USER, text)
             _state.value = _state.value.copy(isThinking = true)
+            // appendMessage(USER) est maintenant DANS le try (juste en-dessous)
+            // -- avant, un echec Room (base corrompue, disque plein...) sur
+            // CETTE insertion precise plantait avant meme que isThinking soit
+            // visible, mais restait quand meme un crash total de l'appli.
             // Tout le corps ci-dessous est desormais enveloppe en try/catch/
             // finally (task #326/#328, signalement utilisateur "des que
             // Jarvis reflechit, l'appli crash") : avant ça, la moindre
@@ -129,6 +132,8 @@ class ChatViewModel(
             // depuis Kotlin, seul un correctif cote AAR (voir task #325)
             // peut l'empecher.
             try {
+                appendMessage(Turn.Role.USER, text)
+
                 // 1. Try a device-action command first (fully local, instant, deterministic).
                 when (val result = commandRouter.route(text)) {
                     is CommandResult.Handled -> {
