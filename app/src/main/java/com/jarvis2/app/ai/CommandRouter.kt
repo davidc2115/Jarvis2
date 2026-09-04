@@ -147,6 +147,12 @@ class CommandRouter(
         }
         "list_calendars" -> listCalendarsAction()
         "save_contact_profile" -> saveContactProfileFromParams(params)
+        "search_contact_profile" -> searchContactProfileAction(params["query"] ?: params["name"] ?: "")
+        "list_contacts_by_category" -> listContactsByCategoryAction(params["category"] ?: "")
+        "delete_contact_profile" -> deleteContactProfileAction(params["name"] ?: "")
+        "search_contact" -> searchContactAction(params["name"] ?: params["query"] ?: "")
+        "list_contact_labels" -> listContactLabelsAction()
+        "list_contacts_by_label" -> listContactsByLabelAction(params["label"] ?: "")
         "obsidian_create_note", "create_note" -> createNoteFromParams(params)
         "set_contact_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACTS, "des contacts", params["style"])
         "set_calendar_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_PLANNING, "du planning", params["style"])
@@ -502,13 +508,20 @@ class CommandRouter(
             },
             Matcher(Regex("cherche.*contact")) { t ->
                 val query = extractAfter(t, listOf("contact"))
-                if (query == null) {
-                    CommandResult.Handled("Précise un nom à chercher, par exemple \"cherche le contact Marie\".")
-                } else {
-                    val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(query, ignoreCase = true) }
-                    if (matches.isEmpty()) CommandResult.Handled("Aucun contact trouvé pour « $query ».")
-                    else CommandResult.Handled("Trouvé : " + matches.joinToString(", ") { it.name })
-                }
+                if (query == null) CommandResult.Handled("Précise un nom à chercher, par exemple « cherche le contact Marie ».")
+                else searchContactAction(query)
+            },
+            // Fusion task #5 REDO ("COMME SUR NEWJARVIS") -- libellés/groupes du
+            // carnet natif (feature "Libellés" de l'appli Contacts/Google Contacts),
+            // absents du premier portage : voir ContactsRepository.listAllLabels/
+            // listContactsByLabel (portage Newjarvis/ContactsController).
+            Matcher(Regex("""(liste|montre|affiche|quels?).*(libellés?|labels?|groupes?)\s+de\s+contacts?|(libellés?|labels?)\s+de\s+contacts?""")) {
+                listContactLabelsAction()
+            },
+            Matcher(Regex("""contacts?\s+(avec|du|dans)\s+le\s+libellé\s+.+|libellé\s+.+""")) { t ->
+                val label = extractAfter(t, listOf("libellé"))
+                if (label == null) CommandResult.Handled("Précise le libellé à rechercher, par exemple « contacts avec le libellé Famille ».")
+                else listContactsByLabelAction(label)
             },
             // --- Fiche d'un contact precis (numero/email/coordonnees) : voir
             // integrations/ContactsRepository.kt pour phone/email reels.
@@ -1076,6 +1089,124 @@ class CommandRouter(
         )
         vault.saveNote(note)
         return CommandResult.Handled("Fiche « $name » ${if (existing == null) "créée" else "mise à jour"} dans le vault (dossier Contacts).")
+    }
+
+    /**
+     * executeAction("search_contact_profile", ...) -- cherche parmi les
+     * FICHES JARVIS du vault (dossier Contacts/, voir save_contact_profile
+     * ci-dessus), distinctes du carnet natif du telephone. Portage
+     * Newjarvis (fusion task #5 REDO) : action documentee cote Newjarvis
+     * mais jusqu'ici seulement accessible via le matcher regex local
+     * "affiche la fiche contact de X", jamais depuis l'IA cloud en
+     * JARVIS_CMD.
+     */
+    private suspend fun searchContactProfileAction(query: String): CommandResult {
+        if (query.isBlank()) return CommandResult.Handled("Précise un nom à chercher parmi les fiches contact.")
+        val matches = vault.listNotes().filter { it.folderPath == "Contacts" && it.title.contains(query, ignoreCase = true) }
+        return when {
+            matches.isEmpty() -> CommandResult.Handled("Aucune fiche contact trouvée pour « $query ».")
+            matches.size > 1 -> CommandResult.Handled(
+                "Plusieurs fiches correspondent à « $query » : " + matches.joinToString(", ") { it.title } + ". Précise laquelle.",
+            )
+            else -> CommandResult.Handled(matches.first().body.trim().ifBlank { "Fiche « ${matches.first().title} » trouvée mais vide." })
+        }
+    }
+
+    /**
+     * executeAction("list_contacts_by_category", ...) -- liste les fiches
+     * JARVIS du vault dont le champ "categorie" (voir saveContactProfileFromParams,
+     * plusieurs valeurs possibles separees par virgule) correspond. Portage
+     * Newjarvis/ApiClient list_contacts_by_category, fusion task #5 REDO.
+     */
+    private suspend fun listContactsByCategoryAction(category: String): CommandResult {
+        if (category.isBlank()) return CommandResult.Handled("Précise la catégorie à lister (ex : travail, famille, client).")
+        val fiches = vault.listNotes().filter { note ->
+            note.folderPath == "Contacts" &&
+                note.frontmatter["categorie"]?.split(",")?.any { it.trim().equals(category.trim(), ignoreCase = true) } == true
+        }
+        return if (fiches.isEmpty()) {
+            CommandResult.Handled("Aucune fiche contact dans la catégorie « $category ».")
+        } else {
+            CommandResult.Handled("Fiches contact « $category » (${fiches.size}) : " + fiches.joinToString(", ") { it.title })
+        }
+    }
+
+    /**
+     * executeAction("delete_contact_profile", ...) -- supprime une fiche
+     * JARVIS du vault (jamais le contact natif du telephone -- deux
+     * systemes distincts, voir plus haut). Portage Newjarvis/ApiClient
+     * delete_contact_profile, fusion task #5 REDO.
+     */
+    private suspend fun deleteContactProfileAction(name: String): CommandResult {
+        if (name.isBlank()) return CommandResult.Handled("Précise le nom de la fiche contact à supprimer.")
+        val matches = vault.listNotes().filter { it.folderPath == "Contacts" && it.title.contains(name, ignoreCase = true) }
+        return when {
+            matches.isEmpty() -> CommandResult.Handled("Aucune fiche contact trouvée pour « $name ».")
+            matches.size > 1 -> CommandResult.Handled(
+                "Plusieurs fiches correspondent à « $name » : " + matches.joinToString(", ") { it.title } + ". Précise laquelle.",
+            )
+            else -> {
+                vault.deleteNote(matches.first())
+                CommandResult.Handled("Fiche « ${matches.first().title} » supprimée du vault.")
+            }
+        }
+    }
+
+    /**
+     * executeAction("search_contact", ...) / matcher local "cherche le
+     * contact X" -- recherche dans le CARNET NATIF du telephone (portage
+     * Newjarvis/ContactsController.searchContacts, fusion task #5 REDO),
+     * DISTINCTE des fiches JARVIS ci-dessus : deux systemes de contacts
+     * separes, exactement comme dans Newjarvis (voir le commentaire de
+     * ApiClient.SYSTEM_PROMPT : "distinct des catégories Contacts JARVIS").
+     * Affiche aussi les libellés natifs (🏷️, voir ContactsRepository.
+     * listContacts/Contact.labels) -- absents du premier portage.
+     */
+    private fun searchContactAction(query: String): CommandResult {
+        if (query.isBlank()) return CommandResult.Handled("Précise un nom à chercher, par exemple « cherche le contact Marie ».")
+        val matches = integrations.contacts.listContacts(limit = 200).filter { it.name.contains(query, ignoreCase = true) }
+        if (matches.isEmpty()) return CommandResult.Handled("👤 Aucun contact trouvé pour « $query ».")
+        val text = buildString {
+            appendLine("👤 Résultats de la recherche pour « $query » :")
+            matches.take(10).forEach { c ->
+                val phoneSuffix = c.phone?.takeIf { it.isNotBlank() }?.let { " : $it" } ?: " (aucun numéro enregistré)"
+                val labelsSuffix = if (c.labels.isNotEmpty()) " 🏷️ ${c.labels.joinToString(", ")}" else ""
+                appendLine("• ${c.name}$phoneSuffix$labelsSuffix")
+            }
+        }.trim()
+        return CommandResult.Handled(text)
+    }
+
+    /**
+     * executeAction("list_contact_labels", ...) -- portage Newjarvis/
+     * ContactsController.listAllLabels, fusion task #5 REDO : capacite
+     * absente du premier portage, JARVIS ne connaissait jusqu'ici jamais
+     * les libellés/groupes crees manuellement dans l'appli Contacts.
+     */
+    private fun listContactLabelsAction(): CommandResult {
+        val labels = integrations.contacts.listAllLabels()
+        return if (labels.isEmpty()) {
+            CommandResult.Handled("🏷️ Aucun libellé/groupe de contact trouvé dans le carnet d'adresses du téléphone.")
+        } else {
+            CommandResult.Handled("🏷️ Libellés de contacts trouvés (${labels.size}) : " + labels.joinToString(", "))
+        }
+    }
+
+    /** executeAction("list_contacts_by_label", ...) -- portage Newjarvis/ContactsController.listContactsByLabel, fusion task #5 REDO. */
+    private fun listContactsByLabelAction(label: String): CommandResult {
+        if (label.isBlank()) return CommandResult.Handled("Précise le libellé à rechercher.")
+        val matches = integrations.contacts.listContactsByLabel(label)
+        if (matches.isEmpty()) {
+            return CommandResult.Handled("📋 Aucun contact n'a le libellé « $label » (dis « liste les libellés » pour voir les noms disponibles).")
+        }
+        val text = buildString {
+            appendLine("🏷️ Contacts avec le libellé « $label » :")
+            matches.forEach { c ->
+                val phoneSuffix = c.phone?.takeIf { it.isNotBlank() }?.let { " : $it" } ?: ""
+                appendLine("• ${c.name}$phoneSuffix")
+            }
+        }.trim()
+        return CommandResult.Handled(text)
     }
 
     /** Cree une note structuree (title/content/folder deja extraits par l'IA cloud, pas de regex a matcher). */

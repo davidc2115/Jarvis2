@@ -417,8 +417,23 @@ class ChatViewModel(
         )
         appendLine()
         appendLine("Actions disponibles :")
-        appendLine("- save_contact_profile : créer/mettre à jour une fiche contact. Params : name (obligatoire), " +
+        appendLine("- save_contact_profile : créer/mettre à jour une fiche contact JARVIS (notes du vault, dossier Contacts, " +
+            "distinct du carnet natif du téléphone -- voir search_contact plus bas pour le carnet natif). Params : name (obligatoire), " +
             "category, nickname, phone, phonePro, email, address, addressPro, birthday, company, position, notes.")
+        // Fusion task #5 REDO -- avant, seules save_contact_profile (creation/maj)
+        // et la LECTURE via matcher regex local existaient : aucune de ces actions
+        // n'etait accessible a l'IA cloud pour chercher/lister/supprimer une fiche.
+        appendLine(
+            "- search_contact_profile : chercher une fiche contact JARVIS par nom. Params : query. " +
+                "list_contacts_by_category : lister les fiches JARVIS d'une catégorie (travail/personnel/famille/client/autre " +
+                "ou une catégorie personnalisée). Params : category. " +
+                "delete_contact_profile : supprimer une fiche contact JARVIS. Params : name.",
+        )
+        appendLine(
+            "- search_contact : chercher dans le CARNET NATIF du téléphone (inclut les libellés 🏷️ créés dans l'appli Contacts) -- " +
+                "DISTINCT des fiches JARVIS ci-dessus. Params : name. list_contact_labels : lister tous les libellés/groupes du carnet " +
+                "natif. Aucun param. list_contacts_by_label : lister les contacts natifs portant un libellé précis. Params : label.",
+        )
         appendLine("- obsidian_create_note : créer une note dans le vault Obsidian. Params : title, content, folder (optionnel).")
         // Fusion task #5 REDO ("COMME SUR NEWJARVIS") -- avant, seule delete_event
         // (par titre) etait documentee ici : l'IA cloud ne pouvait ni creer, ni
