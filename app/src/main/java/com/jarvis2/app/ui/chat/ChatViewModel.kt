@@ -420,9 +420,43 @@ class ChatViewModel(
         appendLine("- save_contact_profile : créer/mettre à jour une fiche contact. Params : name (obligatoire), " +
             "category, nickname, phone, phonePro, email, address, addressPro, birthday, company, position, notes.")
         appendLine("- obsidian_create_note : créer une note dans le vault Obsidian. Params : title, content, folder (optionnel).")
-        appendLine("- delete_event : supprimer un rendez-vous/événement de l'agenda du téléphone (fusion task #5). Params : title " +
-            "(le titre du rendez-vous tel qu'il apparaît dans le planning -- jamais d'id, aucun id n'est jamais communiqué). " +
-            "Cherche parmi les 90 prochains jours ; si plusieurs événements correspondent, précise-le à l'utilisateur au lieu de choisir au hasard.")
+        // Fusion task #5 REDO ("COMME SUR NEWJARVIS") -- avant, seule delete_event
+        // (par titre) etait documentee ici : l'IA cloud ne pouvait ni creer, ni
+        // chercher, ni modifier, ni lister l'agenda des que la phrase de
+        // l'utilisateur ne matchait aucune regex locale (voir CommandRouter.route,
+        // essaye AVANT d'atteindre l'IA cloud). Documente maintenant le meme jeu
+        // d'actions que Newjarvis/ApiClient.SYSTEM_PROMPT, avec le meme workflow
+        // "cherche d'abord un id avec search_event, agis ensuite avec cet id".
+        appendLine(
+            "- today_events : voir les événements du jour. Aucun param. " +
+                "upcoming_events : voir les prochains événements. Params : days (nombre de jours, défaut 7). " +
+                "week_events : voir une semaine calendaire entière. Params : offset (0 = cette semaine, -1 = la semaine " +
+                "dernière, 1 = la semaine prochaine, défaut 0). list_calendars : lister les calendriers disponibles. Aucun param.",
+        )
+        appendLine(
+            "- create_event : créer un rendez-vous/événement dans l'agenda du téléphone. Params : title (obligatoire), " +
+                "date (langage naturel français : vide/"aujourd'hui"/"demain"/"après-demain"/un jour de semaine/"15/03"/"15 mars" -- " +
+                "vide = aujourd'hui), time (ex : "14h30", "9h" -- vide = 9h par défaut), description (optionnel), " +
+                "location (optionnel, adresse/lieu du rendez-vous), calendar (optionnel, nom/surnom d'un calendrier précis " +
+                "-- vide = calendrier par défaut).",
+        )
+        appendLine(
+            "- search_event : chercher un ou plusieurs événements A VENIR (90 prochains jours) par titre, pour obtenir " +
+                "leur id EXACT avant de les modifier/supprimer -- NE JAMAIS inventer un id, toujours passer par search_event " +
+                "(ou today_events/upcoming_events/week_events, qui affichent aussi les id) d'abord si tu n'as pas déjà l'id " +
+                "sous les yeux dans la conversation. Params : query (mots du titre recherché), calendar (optionnel).",
+        )
+        appendLine(
+            "- update_event : modifier un rendez-vous EXISTANT (renommer, déplacer, changer le lieu/la description). " +
+                "Params : eventId (obligatoire, un id numérique récupéré via search_event/today_events/upcoming_events/" +
+                "week_events -- jamais deviné), et uniquement les champs à changer parmi title, date, time, description, " +
+                "location (les champs omis restent inchangés).",
+        )
+        appendLine(
+            "- delete_event : supprimer un rendez-vous/événement. Params : eventId (préférable, un id récupéré via " +
+                "search_event/today_events/... -- suppression précise et sans ambiguïté) OU, à défaut, title (le titre tel " +
+                "qu'il apparaît dans le planning). Avec title, la recherche porte sur les 90 prochains jours ; si plusieurs " +
+                "événements correspondent, précise-le à l'utilisateur au lieu de choisir au hasard.")
         appendLine("- remember_fact : mémoriser durablement un fait sur l'utilisateur ou ses préférences. Params : fact.")
         appendLine("- forget_fact : oublier un fait mémorisé précédemment. Params : query (mots-clés du fait à oublier).")
         appendLine("- set_contact_presentation_style : mémoriser comment présenter la liste des contacts. Params : style.")

@@ -121,7 +121,31 @@ class CommandRouter(
      * comme un vrai assistant".
      */
     suspend fun executeAction(action: String, params: Map<String, String>): CommandResult = when (action) {
-        "delete_event" -> deleteEventByTitle(params["title"] ?: params["query"] ?: params["event"] ?: "")
+        "create_event" -> createEventFromParams(params)
+        "search_event" -> searchEventAction(params["query"] ?: params["title"] ?: "", params["calendar"])
+        "update_event" -> updateEventFromParams(params)
+        "delete_event" -> deleteEventFromParams(params)
+        "today_events" -> CommandResult.Handled(renderEvents(integrations.calendar.eventsInRange(startOfToday(), startOfToday() + 86_400_000L, 100), "Aujourd'hui"))
+        "upcoming_events" -> {
+            val days = params["days"]?.toIntOrNull()?.coerceIn(1, 90) ?: 7
+            val now = System.currentTimeMillis()
+            CommandResult.Handled(renderEvents(integrations.calendar.eventsInRange(now, now + days * 86_400_000L, 100), "Les $days prochains jours"))
+        }
+        "week_events" -> {
+            val offset = params["offset"]?.toIntOrNull() ?: params["weekOffset"]?.toIntOrNull() ?: 0
+            val monday = java.time.LocalDate.now().with(java.time.DayOfWeek.MONDAY).plusWeeks(offset.toLong())
+            val zone = java.time.ZoneId.systemDefault()
+            val from = monday.atStartOfDay(zone).toInstant().toEpochMilli()
+            val to = monday.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val label = when {
+                offset == 0 -> "Cette semaine"
+                offset == -1 -> "La semaine dernière"
+                offset == 1 -> "La semaine prochaine"
+                else -> "La semaine du ${monday}"
+            }
+            CommandResult.Handled(renderEvents(integrations.calendar.eventsInRange(from, to, 200), label))
+        }
+        "list_calendars" -> listCalendarsAction()
         "save_contact_profile" -> saveContactProfileFromParams(params)
         "obsidian_create_note", "create_note" -> createNoteFromParams(params)
         "set_contact_presentation_style" -> savePresentationInstructionDirect(PREF_NOTE_CONTACTS, "des contacts", params["style"])
@@ -286,19 +310,15 @@ class CommandRouter(
                     )
                 }
             },
+            // Fusion task #5 REDO ("COMME SUR NEWJARVIS") -- date/heure desormais
+            // resolues via resolvePeriod()/extractTime() (deja utilises par le
+            // planning) au lieu du precedent "+1h depuis maintenant" fixe, qui
+            // ignorait completement "demain a 14h"/"vendredi a 10h30" etc. et
+            // creait systematiquement l'evenement au mauvais moment.
             Matcher(Regex("(crée|ajoute|planifie).*(rendez-vous|événement|evenement|rappel|réunion)")) { t ->
                 val title = extractAfter(t, listOf("rendez-vous", "événement", "evenement", "rappel", "réunion")) ?: "Nouvel événement Jarvis"
-                val eventId = integrations.calendar.createEvent(title = title, startTimeMillis = System.currentTimeMillis() + 3600_000)
-                CommandResult.Handled("Événement \"$title\" créé dans l'agenda (id $eventId).")
+                createEventAndReport(title = title, dateTimeText = t, calendarRef = null, description = "", location = "")
             },
-            // Fusion task #5 (portage Newjarvis/CalendarController.deleteEvent) --
-            // capacite qui n'existait PAS DU TOUT dans Jarvis2 jusqu'ici (seules la
-            // creation et la LECTURE du planning etaient possibles, jamais la
-            // suppression). Recherche par TITRE plutot que par id opaque (jamais
-            // expose a l'utilisateur ni a l'IA cloud, voir deleteEventByTitle) --
-            // reutilisee identiquement par executeAction("delete_event", ...) pour
-            // que l'IA cloud puisse declencher la meme suppression depuis une
-            // demande en langage libre.
             Matcher(Regex("""(supprime|annule|efface|retire).*(rendez-vous|événement|evenement|réunion|reunion)""")) { t ->
                 val title = extractAfter(t, listOf("rendez-vous", "événement", "evenement", "réunion", "reunion"))
                 deleteEventByTitle(title.orEmpty())
@@ -374,24 +394,10 @@ class CommandRouter(
                     }
                 }
             },
-            Matcher(Regex("""(liste|montre|affiche|quels?).*calendriers?""")) {
-                // listCalendarGroups() deduplique les entrees identiques (meme nom +
-                // meme compte) -- voir task #308 : sans ca, un calendrier synchronise
-                // par plusieurs comptes/applis apparaissait plusieurs fois dans cette
-                // meme reponse, exactement le "certains sont en double" signale.
-                val groups = integrations.calendar.listCalendarGroups()
-                val visibleIds = visibleCalendarIdsOrNull() // null = rien de masque, tout est affiche
-                if (groups.isEmpty()) {
-                    CommandResult.Handled("Aucun calendrier trouvé (ou permission Agenda non accordée).")
-                } else {
-                    CommandResult.Handled(
-                        "Calendriers disponibles : " + groups.joinToString(", ") { g ->
-                            val masque = visibleIds != null && g.ids.none { it in visibleIds }
-                            "${g.displayName} (${g.accountName})" + if (masque) " [masqué]" else ""
-                        } + " — dis « cache le calendrier X » ou « réaffiche le calendrier X » pour changer.",
-                    )
-                }
-            },
+            // listCalendarsAction() deduplique les entrees identiques (meme nom +
+            // meme compte, voir listCalendarGroups()/task #308) et est desormais
+            // partagee avec executeAction("list_calendars", ...) pour l'IA cloud.
+            Matcher(Regex("""(liste|montre|affiche|quels?).*calendriers?""")) { listCalendarsAction() },
             // --- Surnom de calendrier ("surnomme le calendrier Compte pro en
             // Thomas") : permet d'utiliser "planning de Thomas" meme si le vrai
             // nom du calendrier (compte Google, calendrier partage...) est
@@ -947,7 +953,7 @@ class CommandRouter(
         // entre parentheses -- l'utilisateur ne le voyait jamais avant, alors
         // qu'un planning multi-comptes (perso/pro/partages) est ambigu sans ca.
         if (!groupByDay) {
-            return "$label : " + events.joinToString(" ; ") { "${it.title} (${it.calendarName})" }
+            return "$label : " + events.joinToString(" ; ") { "${it.title} (${it.calendarName}, id ${it.id})" }
         }
 
         val zone = java.time.ZoneId.systemDefault()
@@ -963,7 +969,12 @@ class CommandRouter(
                 appendLine("📅 $dayLabel")
                 dayEvents.forEach { e ->
                     val time = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone).toLocalTime().format(timeFmt)
-                    appendLine("  • $time — ${e.title} (${e.calendarName})")
+                    // L'id est toujours affiche (portage Newjarvis/CalendarController --
+                    // "COMME SUR NEWJARVIS" : la-bas, TOUT affichage de planning montre
+                    // l'id de chaque evenement) : c'est ce qui permet a l'IA cloud de
+                    // reutiliser un id precis dans un search_event/update_event/delete_event
+                    // suivant, au lieu de re-matcher un titre approximatif a chaque fois.
+                    appendLine("  • $time — ${e.title} (${e.calendarName}) [id ${e.id}]")
                 }
             }
         }.trim()
@@ -1198,19 +1209,248 @@ class CommandRouter(
             else -> {
                 val event = matches.first()
                 if (integrations.calendar.deleteEvent(event.id)) {
-                    CommandResult.Handled("Rendez-vous « ${event.title} » supprimé.")
+                    CommandResult.Handled("🗑️ Rendez-vous « ${event.title} » supprimé.")
                 } else {
-                    // Meme famille de probleme que task #7 historique (calendriers
-                    // Xiaomi) : certains OEM (MIUI notamment) bloquent silencieusement
-                    // l'ecriture agenda par une appli tierce malgre WRITE_CALENDAR
-                    // deja accordee.
-                    CommandResult.Handled(
-                        "Échec de la suppression de « ${event.title} ». Si tu es sur un téléphone Xiaomi/MIUI : " +
-                            "Paramètres > Applications > Jarvis2 > Autorisations supplémentaires > active « Modifier l'agenda »/« Démarrage automatique », " +
-                            "en plus de la permission agenda déjà accordée.",
-                    )
+                    CommandResult.Handled(diagnoseCalendarWriteFailure("suppression"))
                 }
             }
+        }
+    }
+
+    /**
+     * Debut de journee (00h00) selon le fuseau de l'appareil -- utilise par
+     * executeAction("today_events", ...) pour l'IA cloud (fusion task #5 REDO).
+     */
+    private fun startOfToday(): Long {
+        val zone = java.time.ZoneId.systemDefault()
+        return java.time.LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
+
+    /**
+     * Resout un instant de creation/modification de rendez-vous a partir
+     * d'un texte libre contenant a la fois la date ET l'heure (ex: "demain
+     * a 14h", "vendredi 10h30", "15/03 9h") -- portage Newjarvis/
+     * CalendarController.resolveDate+resolveTime, mais reutilise directement
+     * resolvePeriod()/extractTime() DEJA presents dans ce fichier (utilises
+     * par le planning) plutot que de dupliquer un second parseur de date
+     * francais : les deux couvrent deja aujourd'hui/demain/apres-demain/
+     * hier/jours de semaine/dates explicites JJ-MM(-AAAA)/mois en toutes
+     * lettres/"dans X jours", un peu plus que le resolveDate original de
+     * Newjarvis. Heure par defaut 9h00 si aucune n'est trouvee dans le
+     * texte (meme defaut que Newjarvis: defaultHour=9), jamais l'heure
+     * actuelle -- create_event "demain" doit toujours creer un evenement a
+     * une heure raisonnable et previsible, pas a "demain a l'heure exacte
+     * ou je parle aujourd'hui".
+     */
+    private fun resolveEventStartMillis(dateTimeText: String): Long {
+        val zone = java.time.ZoneId.systemDefault()
+        val period = resolvePeriod(dateTimeText)
+        val periodStart = java.time.Instant.ofEpochMilli(period.fromMillis).atZone(zone)
+        val explicitTime = extractTime(dateTimeText)
+        return when {
+            explicitTime != null ->
+                periodStart.toLocalDate().atTime(explicitTime.first, explicitTime.second).atZone(zone).toInstant().toEpochMilli()
+            periodStart.hour != 0 || periodStart.minute != 0 ->
+                // resolvePeriod a deja renvoye une heure precise ("ce soir"/
+                // "cet apres-midi"/"ce matin") : on la garde telle quelle.
+                period.fromMillis
+            else -> periodStart.toLocalDate().atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
+        }
+    }
+
+    /**
+     * Message d'echec generique pour une ecriture agenda (update/delete)
+     * qui a affecte 0 ligne alors que l'evenement existe bien -- portage
+     * Newjarvis/CalendarController.diagnoseWriteFailure : sur MIUI/Xiaomi
+     * notamment, une appli tierce peut voir sa modification silencieusement
+     * bloquee malgre WRITE_CALENDAR deja accorde (meme famille de probleme
+     * que task #7 historique de ce depot).
+     */
+    private fun diagnoseCalendarWriteFailure(action: String): String =
+        "⚠️ La $action a échoué. Si tu es sur un téléphone Xiaomi/MIUI : Paramètres > Applications > Jarvis2 > " +
+            "Autorisations supplémentaires > active « Modifier l'agenda »/« Démarrage automatique », en plus de la " +
+            "permission agenda déjà accordée. Sinon, vérifie que l'événement est toujours sur un calendrier " +
+            "synchronisé (pas local) via « liste les calendriers »."
+
+    /**
+     * Cree un evenement et formule la reponse utilisateur -- point d'entree
+     * commun au matcher regex local (dateTimeText = phrase entiere) ET a
+     * executeAction("create_event", ...) pour l'IA cloud (dateTimeText =
+     * "date time" concatenes depuis les params JSON), fusion task #5 REDO.
+     * [calendarRef] optionnel cible un calendrier precis (nom/surnom/id,
+     * voir resolveCalendarFilter) -- absent du premier portage, present
+     * dans Newjarvis/CalendarController.createEvent.
+     */
+    private suspend fun createEventAndReport(
+        title: String,
+        dateTimeText: String,
+        calendarRef: String?,
+        description: String,
+        location: String,
+    ): CommandResult {
+        val calendarInfo = calendarRef?.let { resolveCalendarFilter(it) }
+        if (!calendarRef.isNullOrBlank() && calendarInfo == null) {
+            return CommandResult.Handled(
+                "Calendrier « $calendarRef » introuvable — dis « liste les calendriers » pour voir les noms disponibles, " +
+                    "ou omets le calendrier pour utiliser celui par défaut.",
+            )
+        }
+        val startMillis = resolveEventStartMillis(dateTimeText)
+        val eventId = integrations.calendar.createEvent(
+            title = title,
+            startTimeMillis = startMillis,
+            description = description,
+            location = location,
+            calendarId = calendarInfo?.id,
+        )
+        if (eventId == null) {
+            return CommandResult.Handled("Échec de la création de l'événement « $title » — vérifie la permission Agenda dans les réglages du téléphone.")
+        }
+        val zone = java.time.ZoneId.systemDefault()
+        val dt = java.time.Instant.ofEpochMilli(startMillis).atZone(zone)
+        val dateFmt = java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM 'à' HH'h'mm", java.util.Locale.FRENCH)
+        val whenLabel = dt.format(dateFmt).replaceFirstChar { it.uppercase() }
+        val calSuffix = calendarInfo?.let { " (calendrier : ${it.displayName})" } ?: ""
+        return CommandResult.Handled("✅ Événement « $title » créé pour $whenLabel$calSuffix (id $eventId).")
+    }
+
+    /** executeAction("create_event", ...) -- params: title, date?, time?, description?, location?, calendar?. */
+    private suspend fun createEventFromParams(params: Map<String, String>): CommandResult {
+        val title = params["title"]?.takeIf { it.isNotBlank() }
+            ?: return CommandResult.Handled("Précise le titre de l'événement à créer.")
+        val dateTimeText = listOfNotNull(params["date"], params["time"]).joinToString(" ")
+        return createEventAndReport(
+            title = title,
+            dateTimeText = dateTimeText,
+            calendarRef = params["calendar"],
+            description = params["description"].orEmpty(),
+            location = params["location"].orEmpty(),
+        )
+    }
+
+    /**
+     * executeAction("search_event", ...) -- portage Newjarvis/
+     * CalendarController.searchEvents : cherche un evenement A VENIR (90
+     * prochains jours) par titre et renvoie ses ids, pour que l'IA cloud
+     * puisse ensuite appeler update_event/delete_event avec l'id EXACT
+     * plutot que de re-matcher un titre approximatif (workflow "cherche
+     * d'abord, agis ensuite" -- voir buildCloudSystemPrompt).
+     */
+    private suspend fun searchEventAction(query: String, calendarRef: String?): CommandResult {
+        if (query.isBlank()) {
+            return CommandResult.Handled("Précise ce que tu cherches dans l'agenda (ex : « cherche le rendez-vous dentiste »).")
+        }
+        val calendarInfo = calendarRef?.let { resolveCalendarFilter(it) }
+        if (!calendarRef.isNullOrBlank() && calendarInfo == null) {
+            return CommandResult.Handled("Calendrier « $calendarRef » introuvable — dis « liste les calendriers » pour voir les noms disponibles.")
+        }
+        val now = System.currentTimeMillis()
+        val matches = integrations.calendar.eventsInRange(
+            now - 86_400_000L, now + 90L * 86_400_000L, 200,
+            calendarId = calendarInfo?.id,
+            calendarIds = if (calendarInfo == null) visibleCalendarIdsOrNull() else null,
+        ).filter { it.title.contains(query, ignoreCase = true) }.take(10)
+        if (matches.isEmpty()) {
+            return CommandResult.Handled("🔍 Aucun événement trouvé pour « $query » dans les 90 prochains jours.")
+        }
+        val zone = java.time.ZoneId.systemDefault()
+        val dtFmt = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH'h'mm", java.util.Locale.FRENCH)
+        val text = buildString {
+            appendLine("🔍 Résultats de recherche dans l'agenda pour « $query » :")
+            matches.forEachIndexed { idx, e ->
+                val dt = java.time.Instant.ofEpochMilli(e.startMillis).atZone(zone)
+                append("${idx + 1}. ${e.title} — ${dt.format(dtFmt)} [id ${e.id}]")
+                if (e.location.isNotBlank()) append(" 📍 ${e.location}")
+                appendLine()
+            }
+        }.trim()
+        return CommandResult.Handled(text)
+    }
+
+    /**
+     * executeAction("update_event", ...) -- params: eventId (obligatoire,
+     * recupere via search_event/today_events/... au prealable, JAMAIS
+     * invente), title?/date?/time?/description?/location? (seuls les
+     * champs fournis changent). Portage Newjarvis/CalendarController.
+     * updateEvent, absent du premier portage (deja cable cote
+     * CalendarRepository mais jamais relie a aucune commande).
+     */
+    private suspend fun updateEventFromParams(params: Map<String, String>): CommandResult {
+        val eventId = params["eventId"]?.toLongOrNull()
+            ?: return CommandResult.Handled("Précise l'id de l'événement à modifier (utilise search_event pour le retrouver d'abord).")
+        val existing = integrations.calendar.getEventDetails(eventId)
+            ?: return CommandResult.Handled("Événement introuvable (id $eventId) — relance search_event/today_events pour récupérer un id à jour.")
+
+        val hasDateOrTime = !params["date"].isNullOrBlank() || !params["time"].isNullOrBlank()
+        val newStartMillis = if (hasDateOrTime) {
+            val zone = java.time.ZoneId.systemDefault()
+            val existingZdt = java.time.Instant.ofEpochMilli(existing.startMillis).atZone(zone)
+            val dateText = params["date"]?.takeIf { it.isNotBlank() }
+                ?: existingZdt.toLocalDate().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"))
+            val timeText = params["time"]?.takeIf { it.isNotBlank() }
+                ?: existingZdt.toLocalTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+            resolveEventStartMillis("$dateText $timeText")
+        } else {
+            null
+        }
+        val duration = (existing.endMillis - existing.startMillis).coerceAtLeast(0L)
+        val newEndMillis = newStartMillis?.plus(duration)
+
+        val ok = integrations.calendar.updateEvent(
+            eventId = eventId,
+            newTitle = params["title"]?.takeIf { it.isNotBlank() },
+            newStartMillis = newStartMillis,
+            newEndMillis = newEndMillis,
+            newDescription = params["description"]?.takeIf { it.isNotBlank() },
+            newLocation = params["location"]?.takeIf { it.isNotBlank() },
+        )
+        return if (ok) {
+            CommandResult.Handled("✏️ Événement « ${params["title"] ?: existing.title} » (id $eventId) modifié avec succès.")
+        } else {
+            CommandResult.Handled(diagnoseCalendarWriteFailure("modification"))
+        }
+    }
+
+    /**
+     * executeAction("delete_event", ...) -- accepte desormais en priorite un
+     * eventId precis (params["eventId"], obtenu via search_event au
+     * prealable -- workflow Newjarvis) ; retombe sur la recherche par titre
+     * ([deleteEventByTitle]) uniquement si aucun id n'est fourni, pour ne
+     * pas casser la compatibilite avec le matcher regex local qui n'a
+     * jamais d'id (le titre est tout ce que l'utilisateur prononce).
+     */
+    private suspend fun deleteEventFromParams(params: Map<String, String>): CommandResult {
+        val eventId = params["eventId"]?.toLongOrNull()
+        if (eventId != null) {
+            val existing = integrations.calendar.getEventDetails(eventId)
+                ?: return CommandResult.Handled("Événement introuvable (id $eventId) — relance search_event/today_events pour récupérer un id à jour.")
+            return if (integrations.calendar.deleteEvent(eventId)) {
+                CommandResult.Handled("🗑️ Rendez-vous « ${existing.title} » (id $eventId) supprimé.")
+            } else {
+                CommandResult.Handled(diagnoseCalendarWriteFailure("suppression"))
+            }
+        }
+        return deleteEventByTitle(params["title"] ?: params["query"] ?: params["event"] ?: "")
+    }
+
+    /**
+     * Liste des calendriers disponibles -- factorisee pour etre appelable a
+     * la fois par le matcher regex local ("liste les calendriers") et par
+     * executeAction("list_calendars", ...) pour l'IA cloud (fusion task #5
+     * REDO : cette action n'etait auparavant accessible qu'en local).
+     */
+    private suspend fun listCalendarsAction(): CommandResult {
+        val groups = integrations.calendar.listCalendarGroups()
+        val visibleIds = visibleCalendarIdsOrNull()
+        return if (groups.isEmpty()) {
+            CommandResult.Handled("Aucun calendrier trouvé (ou permission Agenda non accordée).")
+        } else {
+            CommandResult.Handled(
+                "Calendriers disponibles : " + groups.joinToString(", ") { g ->
+                    val masque = visibleIds != null && g.ids.none { it in visibleIds }
+                    "${g.displayName} (${g.accountName})" + if (masque) " [masqué]" else ""
+                } + " — dis « cache le calendrier X » ou « réaffiche le calendrier X » pour changer.",
+            )
         }
     }
 

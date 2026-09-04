@@ -20,6 +20,7 @@ data class CalendarEvent(
     val endMillis: Long,
     val calendarId: Long,
     val calendarName: String,
+    val location: String = "",
 )
 
 /** Un calendrier du telephone (voir [CalendarRepository.listCalendars]). */
@@ -100,12 +101,20 @@ class CalendarRepository(private val context: Context) {
             .map { (key, cals) -> CalendarGroup(displayName = key.first, accountName = key.second, ids = cals.map { c -> c.id }) }
             .sortedBy { it.displayName.lowercase() }
 
-    fun createEvent(title: String, startTimeMillis: Long, durationMillis: Long = 3_600_000L, description: String = ""): Long? = runCatching {
-        val calId = defaultCalendarId() ?: return@runCatching null
+    fun createEvent(
+        title: String,
+        startTimeMillis: Long,
+        durationMillis: Long = 3_600_000L,
+        description: String = "",
+        location: String = "",
+        calendarId: Long? = null,
+    ): Long? = runCatching {
+        val calId = calendarId ?: defaultCalendarId() ?: return@runCatching null
         val values = ContentValues().apply {
             put(CalendarContract.Events.CALENDAR_ID, calId)
             put(CalendarContract.Events.TITLE, title)
             put(CalendarContract.Events.DESCRIPTION, description)
+            put(CalendarContract.Events.EVENT_LOCATION, location)
             put(CalendarContract.Events.DTSTART, startTimeMillis)
             put(CalendarContract.Events.DTEND, startTimeMillis + durationMillis)
             put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
@@ -152,6 +161,7 @@ class CalendarRepository(private val context: Context) {
             CalendarContract.Events.DTEND,
             CalendarContract.Events.CALENDAR_ID,
             CalendarContract.Events.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Events.EVENT_LOCATION,
         )
         val idsFilter = calendarIds?.takeIf { it.isNotEmpty() }
         val selection = buildString {
@@ -187,6 +197,7 @@ class CalendarRepository(private val context: Context) {
                         endMillis = it.getLong(3),
                         calendarId = it.getLong(4),
                         calendarName = it.getString(5) ?: "(sans nom)",
+                        location = it.getString(6) ?: "",
                     )
                 )
             }
@@ -224,12 +235,14 @@ class CalendarRepository(private val context: Context) {
         newStartMillis: Long? = null,
         newEndMillis: Long? = null,
         newDescription: String? = null,
+        newLocation: String? = null,
     ): Boolean = runCatching {
         val values = ContentValues().apply {
             newTitle?.let { put(CalendarContract.Events.TITLE, it) }
             newStartMillis?.let { put(CalendarContract.Events.DTSTART, it) }
             newEndMillis?.let { put(CalendarContract.Events.DTEND, it) }
             newDescription?.let { put(CalendarContract.Events.DESCRIPTION, it) }
+            newLocation?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
         }
         if (values.size() == 0) return@runCatching false
         context.contentResolver.update(
@@ -239,4 +252,42 @@ class CalendarRepository(private val context: Context) {
             arrayOf(eventId.toString()),
         ) > 0
     }.getOrDefault(false)
+
+    /**
+     * Details complets d'UN evenement par id (portage Newjarvis/
+     * CalendarController.getEventDetails, fusion task #5 REDO) -- utilise
+     * pour verifier qu'un evenement existe encore avant de diagnostiquer un
+     * echec d'ecriture (voir CommandRouter.diagnoseCalendarWriteFailure),
+     * et pour repondre a une commande get_event_details/search_event de
+     * l'IA cloud avec le detail (lieu, description) d'un id precis.
+     */
+    fun getEventDetails(eventId: Long): CalendarEvent? = runCatching {
+        val projection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DTSTART,
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Events.EVENT_LOCATION,
+        )
+        context.contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            projection,
+            "${CalendarContract.Events._ID} = ?",
+            arrayOf(eventId.toString()),
+            null,
+        )?.use { c ->
+            if (!c.moveToFirst()) return@runCatching null
+            CalendarEvent(
+                id = eventId,
+                title = c.getString(1) ?: "(sans titre)",
+                startMillis = c.getLong(2),
+                endMillis = c.getLong(3),
+                calendarId = c.getLong(4),
+                calendarName = c.getString(5) ?: "(sans nom)",
+                location = c.getString(6) ?: "",
+            )
+        }
+    }.getOrNull()
 }
