@@ -450,8 +450,8 @@ class ChatViewModel(
         )
         appendLine(
             "- create_event : créer un rendez-vous/événement dans l'agenda du téléphone. Params : title (obligatoire), " +
-                "date (langage naturel français : vide/"aujourd'hui"/"demain"/"après-demain"/un jour de semaine/"15/03"/"15 mars" -- " +
-                "vide = aujourd'hui), time (ex : "14h30", "9h" -- vide = 9h par défaut), description (optionnel), " +
+                "date (langage naturel français : vide/\"aujourd'hui\"/\"demain\"/\"après-demain\"/un jour de semaine/\"15/03\"/\"15 mars\" -- " +
+                "vide = aujourd'hui), time (ex : \"14h30\", \"9h\" -- vide = 9h par défaut), description (optionnel), " +
                 "location (optionnel, adresse/lieu du rendez-vous), calendar (optionnel, nom/surnom d'un calendrier précis " +
                 "-- vide = calendrier par défaut).",
         )

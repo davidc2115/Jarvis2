@@ -194,8 +194,8 @@ class ContactsRepository(private val context: Context) {
     /** Normalise casse/accents (portage Newjarvis/ContactsController.normalizeLabel) pour que "École"/"ecole"/"ÉCOLE" désignent le même libellé, insensible aux limites du LIKE SQLite sur les accents. */
     private fun normalizeLabel(s: String): String =
         java.text.Normalizer.normalize(s.lowercase().trim(), java.text.Normalizer.Form.NFD)
-            .replace(Regex("\p{Mn}+"), "")
-            .replace(Regex("\s+"), " ")
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(Regex("\\s+"), " ")
 
     /**
      * Tous les libellés/groupes de contacts existants dans le carnet natif
